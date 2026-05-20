@@ -1,0 +1,12 @@
+.codex/
+.info/
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+
+backend/bin/
+frontend/node_modules/
+frontend/dist/

@@ -29,7 +29,13 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	var db *pgxpool.Pool
 	var outboxStore *outbox.PostgresStore
 	if cfg.Database.URL != "" {
-		db, err = pgxpool.New(ctx, cfg.Database.URL)
+		dbConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
+		if err != nil {
+			return err
+		}
+		dbConfig.MaxConns = cfg.Database.MaxConns
+
+		db, err = pgxpool.NewWithConfig(ctx, dbConfig)
 		if err != nil {
 			return err
 		}

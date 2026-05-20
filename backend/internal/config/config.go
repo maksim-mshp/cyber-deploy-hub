@@ -58,8 +58,16 @@ type KIConfig struct {
 	Timeout    time.Duration `env:"KI_TIMEOUT" envDefault:"10s"`
 }
 
+func (c KIConfig) Configured() bool {
+	return strings.TrimSpace(c.APIBaseURL) != "" && strings.TrimSpace(c.AuthToken) != ""
+}
+
 func Load() (Config, error) {
-	cfg, err := env.ParseAs[Config]()
+	return load(env.Options{})
+}
+
+func load(opts env.Options) (Config, error) {
+	cfg, err := env.ParseAsWithOptions[Config](opts)
 	if err != nil {
 		return Config{}, err
 	}

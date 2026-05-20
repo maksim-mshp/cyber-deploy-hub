@@ -1,6 +1,15 @@
 CREATE SCHEMA IF NOT EXISTS api_gateway;
 CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS lms_gateway;
 CREATE SCHEMA IF NOT EXISTS project_pool;
+CREATE SCHEMA IF NOT EXISTS capacity;
+CREATE SCHEMA IF NOT EXISTS cloud_adapter;
+CREATE SCHEMA IF NOT EXISTS vdi_gateway;
+CREATE SCHEMA IF NOT EXISTS lifecycle;
+CREATE SCHEMA IF NOT EXISTS checker;
+CREATE SCHEMA IF NOT EXISTS settings;
+CREATE SCHEMA IF NOT EXISTS audit;
 
 CREATE TABLE IF NOT EXISTS api_gateway.outbox (
     id bigserial PRIMARY KEY,
@@ -69,6 +78,12 @@ CREATE TABLE IF NOT EXISTS core.saga_steps (
 CREATE TABLE IF NOT EXISTS core.outbox (LIKE api_gateway.outbox INCLUDING ALL);
 CREATE TABLE IF NOT EXISTS core.inbox (LIKE api_gateway.inbox INCLUDING ALL);
 
+CREATE TABLE IF NOT EXISTS identity.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS identity.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS lms_gateway.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS lms_gateway.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
 CREATE TABLE IF NOT EXISTS project_pool.ki_projects (
     id uuid PRIMARY KEY,
     domain_id text NOT NULL,
@@ -86,3 +101,24 @@ CREATE INDEX IF NOT EXISTS project_pool_ki_projects_state_idx
 
 CREATE TABLE IF NOT EXISTS project_pool.outbox (LIKE api_gateway.outbox INCLUDING ALL);
 CREATE TABLE IF NOT EXISTS project_pool.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS capacity.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS capacity.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS cloud_adapter.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS cloud_adapter.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS vdi_gateway.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS vdi_gateway.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS lifecycle.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS lifecycle.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS checker.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS checker.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS settings.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS settings.inbox (LIKE api_gateway.inbox INCLUDING ALL);
+
+CREATE TABLE IF NOT EXISTS audit.outbox (LIKE api_gateway.outbox INCLUDING ALL);
+CREATE TABLE IF NOT EXISTS audit.inbox (LIKE api_gateway.inbox INCLUDING ALL);

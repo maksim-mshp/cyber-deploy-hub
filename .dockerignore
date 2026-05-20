@@ -1,0 +1,9 @@
+.git
+.codex
+.info
+**/.DS_Store
+**/node_modules
+**/dist
+**/*.log
+backend/bin
+frontend/.vite
