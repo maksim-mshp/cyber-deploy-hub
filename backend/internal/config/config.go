@@ -18,6 +18,7 @@ type Config struct {
 	OpenStack   OpenStackConfig
 	KI          KIConfig
 	ProjectPool ProjectPoolConfig
+	Capacity    CapacityConfig
 }
 
 type HTTPConfig struct {
@@ -53,10 +54,15 @@ func (c OpenStackConfig) Configured() bool {
 }
 
 type KIConfig struct {
-	APIBaseURL string        `env:"KI_API_BASE_URL" envDefault:"https://edu.cyber-infrastructure.ru:8800"`
-	ProjectID  string        `env:"KI_PROJECT_ID"`
-	AuthToken  string        `env:"KI_AUTH_TOKEN"`
-	Timeout    time.Duration `env:"KI_TIMEOUT" envDefault:"10s"`
+	APIBaseURL    string        `env:"KI_API_BASE_URL" envDefault:"https://edu.cyber-infrastructure.ru:8800"`
+	ProjectID     string        `env:"KI_PROJECT_ID"`
+	AuthToken     string        `env:"KI_AUTH_TOKEN"`
+	SessionCookie string        `env:"KI_SESSION_COOKIE"`
+	SessionID     string        `env:"KI_SESSION_ID" envDefault:"1"`
+	Username      string        `env:"KI_USERNAME"`
+	Password      string        `env:"KI_PASSWORD"`
+	DomainName    string        `env:"KI_DOMAIN_NAME" envDefault:"Hackhaton"`
+	Timeout       time.Duration `env:"KI_TIMEOUT" envDefault:"10s"`
 }
 
 type ProjectPoolConfig struct {
@@ -64,8 +70,29 @@ type ProjectPoolConfig struct {
 	SeedJSON string `env:"PROJECT_POOL_SEED_JSON"`
 }
 
+type CapacityConfig struct {
+	ThresholdPercent   float64 `env:"CAPACITY_THRESHOLD_PERCENT" envDefault:"90"`
+	DemoVCPUs          int     `env:"CAPACITY_DEMO_VCPUS" envDefault:"128"`
+	DemoVCPUsFree      int     `env:"CAPACITY_DEMO_VCPUS_FREE" envDefault:"96"`
+	DemoRAMMiB         int64   `env:"CAPACITY_DEMO_RAM_MIB" envDefault:"262144"`
+	DemoRAMFreeMiB     int64   `env:"CAPACITY_DEMO_RAM_FREE_MIB" envDefault:"196608"`
+	DemoStorageGiB     int64   `env:"CAPACITY_DEMO_STORAGE_GIB" envDefault:"4096"`
+	DemoStorageUsedGiB int64   `env:"CAPACITY_DEMO_STORAGE_USED_GIB" envDefault:"1024"`
+}
+
 func (c KIConfig) Configured() bool {
-	return strings.TrimSpace(c.APIBaseURL) != "" && strings.TrimSpace(c.AuthToken) != ""
+	if strings.TrimSpace(c.APIBaseURL) == "" {
+		return false
+	}
+	if strings.TrimSpace(c.AuthToken) != "" {
+		return true
+	}
+	hasProject := strings.TrimSpace(c.ProjectID) != ""
+	hasSession := strings.TrimSpace(c.SessionCookie) != ""
+	hasCredentials := strings.TrimSpace(c.Username) != "" &&
+		strings.TrimSpace(c.Password) != "" &&
+		strings.TrimSpace(c.DomainName) != ""
+	return hasProject && (hasSession || hasCredentials)
 }
 
 func Load() (Config, error) {

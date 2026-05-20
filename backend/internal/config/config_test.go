@@ -36,7 +36,35 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 		t.Fatal("OpenStack must not be configured without credentials")
 	}
 	if cfg.KI.Configured() {
-		t.Fatal("KI must not be configured without auth token")
+		t.Fatal("KI must not be configured without token, session or credentials")
+	}
+	if cfg.KI.SessionID != "1" {
+		t.Fatalf("KI.SessionID = %q, want 1", cfg.KI.SessionID)
+	}
+	if cfg.Capacity.ThresholdPercent != 90 {
+		t.Fatalf("Capacity.ThresholdPercent = %v, want 90", cfg.Capacity.ThresholdPercent)
+	}
+	if cfg.Capacity.DemoVCPUs != 128 {
+		t.Fatalf("Capacity.DemoVCPUs = %d, want 128", cfg.Capacity.DemoVCPUs)
+	}
+}
+
+func TestKIConfiguredSupportsProjectCredentials(t *testing.T) {
+	cfg, err := load(env.Options{Environment: map[string]string{
+		"KI_PROJECT_ID": "project-1",
+		"KI_USERNAME":   "student",
+		"KI_PASSWORD":   "secret",
+	}})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.KI.Configured() {
+		t.Fatal("KI should be configured with project id and credentials")
+	}
+
+	cfg.KI.Password = ""
+	if cfg.KI.Configured() {
+		t.Fatal("KI project session auth must require password")
 	}
 }
 

@@ -75,6 +75,11 @@ services:
       KI_API_BASE_URL: ${KI_API_BASE_URL:-https://edu.cyber-infrastructure.ru:8800}
       KI_PROJECT_ID: ${KI_PROJECT_ID:-}
       KI_AUTH_TOKEN: ${KI_AUTH_TOKEN:-}
+      KI_SESSION_COOKIE: ${KI_SESSION_COOKIE:-}
+      KI_SESSION_ID: ${KI_SESSION_ID:-1}
+      KI_USERNAME: ${KI_USERNAME:-}
+      KI_PASSWORD: ${KI_PASSWORD:-}
+      KI_DOMAIN_NAME: ${KI_DOMAIN_NAME:-Hackhaton}
       KI_TIMEOUT: ${KI_TIMEOUT:-10s}
     ports:
       - "${API_GATEWAY_PORT:-8080}:8080"
@@ -125,6 +130,53 @@ services:
       NATS_URL: ${NATS_URL:-nats://nats:4222}
       PROJECT_POOL_SEED_FILE: ${PROJECT_POOL_SEED_FILE:-/app/config/project_pool_seed.json}
       PROJECT_POOL_SEED_JSON: ${PROJECT_POOL_SEED_JSON:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  capacity-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/capacity-service"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      OS_AUTH_URL: ${OS_AUTH_URL:-https://edu.cyber-infrastructure.ru:5000/v3}
+      OS_USERNAME: ${OS_USERNAME:-}
+      OS_PASSWORD: ${OS_PASSWORD:-}
+      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME:-Hackhaton}
+      OS_PROJECT_ID: ${OS_PROJECT_ID:-}
+      OS_PROJECT_NAME: ${OS_PROJECT_NAME:-}
+      OS_PROJECT_DOMAIN_NAME: ${OS_PROJECT_DOMAIN_NAME:-Hackhaton}
+      OS_REGION_NAME: ${OS_REGION_NAME:-}
+      OS_ALLOW_REAUTH: ${OS_ALLOW_REAUTH:-true}
+      OS_INSECURE: ${OS_INSECURE:-false}
+      OS_TIMEOUT: ${OS_TIMEOUT:-20s}
+      KI_API_BASE_URL: ${KI_API_BASE_URL:-https://edu.cyber-infrastructure.ru:8800}
+      KI_PROJECT_ID: ${KI_PROJECT_ID:-}
+      KI_AUTH_TOKEN: ${KI_AUTH_TOKEN:-}
+      KI_SESSION_COOKIE: ${KI_SESSION_COOKIE:-}
+      KI_SESSION_ID: ${KI_SESSION_ID:-1}
+      KI_USERNAME: ${KI_USERNAME:-}
+      KI_PASSWORD: ${KI_PASSWORD:-}
+      KI_DOMAIN_NAME: ${KI_DOMAIN_NAME:-Hackhaton}
+      KI_TIMEOUT: ${KI_TIMEOUT:-10s}
+      CAPACITY_THRESHOLD_PERCENT: ${CAPACITY_THRESHOLD_PERCENT:-90}
+      CAPACITY_DEMO_VCPUS: ${CAPACITY_DEMO_VCPUS:-128}
+      CAPACITY_DEMO_VCPUS_FREE: ${CAPACITY_DEMO_VCPUS_FREE:-96}
+      CAPACITY_DEMO_RAM_MIB: ${CAPACITY_DEMO_RAM_MIB:-262144}
+      CAPACITY_DEMO_RAM_FREE_MIB: ${CAPACITY_DEMO_RAM_FREE_MIB:-196608}
+      CAPACITY_DEMO_STORAGE_GIB: ${CAPACITY_DEMO_STORAGE_GIB:-4096}
+      CAPACITY_DEMO_STORAGE_USED_GIB: ${CAPACITY_DEMO_STORAGE_USED_GIB:-1024}
     depends_on:
       postgres:
         condition: service_healthy

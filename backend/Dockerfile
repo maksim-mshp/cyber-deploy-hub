@@ -15,6 +15,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/api-gateway ./cmd/api-gateway
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/core-service ./cmd/core-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/project-pool-service ./cmd/project-pool-service
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/capacity-service ./cmd/capacity-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.22
@@ -27,6 +28,7 @@ WORKDIR /app
 COPY --from=build /out/api-gateway /app/api-gateway
 COPY --from=build /out/core-service /app/core-service
 COPY --from=build /out/project-pool-service /app/project-pool-service
+COPY --from=build /out/capacity-service /app/capacity-service
 COPY --from=build /out/migrate /app/migrate
 COPY config /app/config
 COPY migrations /app/migrations
