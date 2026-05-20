@@ -186,6 +186,47 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  cloud-adapter-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/cloud-adapter-service"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      OS_AUTH_URL: ${OS_AUTH_URL:-https://edu.cyber-infrastructure.ru:5000/v3}
+      OS_USERNAME: ${OS_USERNAME:-}
+      OS_PASSWORD: ${OS_PASSWORD:-}
+      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME:-Hackhaton}
+      OS_PROJECT_ID: ${OS_PROJECT_ID:-}
+      OS_PROJECT_NAME: ${OS_PROJECT_NAME:-}
+      OS_PROJECT_DOMAIN_NAME: ${OS_PROJECT_DOMAIN_NAME:-Hackhaton}
+      OS_REGION_NAME: ${OS_REGION_NAME:-}
+      OS_ALLOW_REAUTH: ${OS_ALLOW_REAUTH:-true}
+      OS_INSECURE: ${OS_INSECURE:-false}
+      OS_TIMEOUT: ${OS_TIMEOUT:-20s}
+      CLOUD_PRIVATE_NETWORK_ID: ${CLOUD_PRIVATE_NETWORK_ID:-}
+      CLOUD_PRIVATE_SUBNET_ID: ${CLOUD_PRIVATE_SUBNET_ID:-}
+      CLOUD_SECURITY_GROUP_IDS: ${CLOUD_SECURITY_GROUP_IDS:-}
+      CLOUD_BLUEPRINT_FILE: ${CLOUD_BLUEPRINT_FILE:-/app/config/lab_blueprints.json}
+      CLOUD_BLUEPRINT_JSON: ${CLOUD_BLUEPRINT_JSON:-}
+      CLOUD_KEY_ENCRYPTION_KEY: ${CLOUD_KEY_ENCRYPTION_KEY:-}
+      CLOUD_KEY_ENCRYPTION_KEY_ID: ${CLOUD_KEY_ENCRYPTION_KEY_ID:-default}
+      CLOUD_DEPLOY_TIMEOUT: ${CLOUD_DEPLOY_TIMEOUT:-20m}
+      CLOUD_POLL_INTERVAL: ${CLOUD_POLL_INTERVAL:-5s}
+      CLOUD_DELETE_POLL_INTERVAL: ${CLOUD_DELETE_POLL_INTERVAL:-3s}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   web:
     build:
       context: ./frontend

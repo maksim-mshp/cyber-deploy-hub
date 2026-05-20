@@ -47,6 +47,12 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.Capacity.DemoVCPUs != 128 {
 		t.Fatalf("Capacity.DemoVCPUs = %d, want 128", cfg.Capacity.DemoVCPUs)
 	}
+	if cfg.Cloud.DeployTimeout != 20*time.Minute {
+		t.Fatalf("Cloud.DeployTimeout = %v, want 20m", cfg.Cloud.DeployTimeout)
+	}
+	if cfg.Cloud.PollInterval != 5*time.Second {
+		t.Fatalf("Cloud.PollInterval = %v, want 5s", cfg.Cloud.PollInterval)
+	}
 }
 
 func TestKIConfiguredSupportsProjectCredentials(t *testing.T) {

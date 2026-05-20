@@ -19,6 +19,7 @@ type Config struct {
 	KI          KIConfig
 	ProjectPool ProjectPoolConfig
 	Capacity    CapacityConfig
+	Cloud       CloudConfig
 }
 
 type HTTPConfig struct {
@@ -78,6 +79,19 @@ type CapacityConfig struct {
 	DemoRAMFreeMiB     int64   `env:"CAPACITY_DEMO_RAM_FREE_MIB" envDefault:"196608"`
 	DemoStorageGiB     int64   `env:"CAPACITY_DEMO_STORAGE_GIB" envDefault:"4096"`
 	DemoStorageUsedGiB int64   `env:"CAPACITY_DEMO_STORAGE_USED_GIB" envDefault:"1024"`
+}
+
+type CloudConfig struct {
+	PrivateNetworkID   string        `env:"CLOUD_PRIVATE_NETWORK_ID"`
+	PrivateSubnetID    string        `env:"CLOUD_PRIVATE_SUBNET_ID"`
+	SecurityGroupIDs   string        `env:"CLOUD_SECURITY_GROUP_IDS"`
+	BlueprintFile      string        `env:"CLOUD_BLUEPRINT_FILE"`
+	BlueprintJSON      string        `env:"CLOUD_BLUEPRINT_JSON"`
+	KeyEncryptionKey   string        `env:"CLOUD_KEY_ENCRYPTION_KEY"`
+	KeyEncryptionKeyID string        `env:"CLOUD_KEY_ENCRYPTION_KEY_ID" envDefault:"default"`
+	DeployTimeout      time.Duration `env:"CLOUD_DEPLOY_TIMEOUT" envDefault:"20m"`
+	PollInterval       time.Duration `env:"CLOUD_POLL_INTERVAL" envDefault:"5s"`
+	DeletePollInterval time.Duration `env:"CLOUD_DELETE_POLL_INTERVAL" envDefault:"3s"`
 }
 
 func (c KIConfig) Configured() bool {

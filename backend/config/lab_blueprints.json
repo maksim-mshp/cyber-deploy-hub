@@ -1,0 +1,37 @@
+[
+  {
+    "name": "L-MS",
+    "image_id": "0c9a712b-f99b-4e49-ae43-43888de5eb58",
+    "flavor_id": "101",
+    "fixed_ip": "10.0.0.10",
+    "disk_gib": 24
+  },
+  {
+    "name": "L-NFS",
+    "image_id": "4dd2524c-aa0b-49f3-b4ea-00643af6aea7",
+    "flavor_id": "f0a74551-ec6e-42cc-96e7-6403989d17ea",
+    "fixed_ip": "10.0.0.70",
+    "disk_gib": 70
+  },
+  {
+    "name": "L-PGSQL",
+    "image_id": "f3465750-ab84-4a08-94ad-3bdda40c99c5",
+    "flavor_id": "f0a74551-ec6e-42cc-96e7-6403989d17ea",
+    "fixed_ip": "10.0.0.55",
+    "disk_gib": 15
+  },
+  {
+    "name": "V-HYPERV",
+    "image_id": "b74ff6e1-0289-4892-abe9-49970587cf6d",
+    "flavor_id": "103",
+    "fixed_ip": "10.0.0.65",
+    "disk_gib": 45
+  },
+  {
+    "name": "W-DC",
+    "image_id": "1c1f3872-03d6-4e0e-ae85-ee048d39b5d9",
+    "flavor_id": "102",
+    "fixed_ip": "10.0.0.5",
+    "disk_gib": 60
+  }
+]
