@@ -53,6 +53,12 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.Cloud.PollInterval != 5*time.Second {
 		t.Fatalf("Cloud.PollInterval = %v, want 5s", cfg.Cloud.PollInterval)
 	}
+	if cfg.VDI.HTTPAddr != ":8082" {
+		t.Fatalf("VDI.HTTPAddr = %q, want :8082", cfg.VDI.HTTPAddr)
+	}
+	if cfg.VDI.AccessTokenTTL != 15*time.Minute {
+		t.Fatalf("VDI.AccessTokenTTL = %v, want 15m", cfg.VDI.AccessTokenTTL)
+	}
 }
 
 func TestKIConfiguredSupportsProjectCredentials(t *testing.T) {

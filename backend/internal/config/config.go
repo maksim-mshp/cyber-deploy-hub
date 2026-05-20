@@ -20,6 +20,7 @@ type Config struct {
 	ProjectPool ProjectPoolConfig
 	Capacity    CapacityConfig
 	Cloud       CloudConfig
+	VDI         VDIConfig
 }
 
 type HTTPConfig struct {
@@ -92,6 +93,13 @@ type CloudConfig struct {
 	DeployTimeout      time.Duration `env:"CLOUD_DEPLOY_TIMEOUT" envDefault:"20m"`
 	PollInterval       time.Duration `env:"CLOUD_POLL_INTERVAL" envDefault:"5s"`
 	DeletePollInterval time.Duration `env:"CLOUD_DELETE_POLL_INTERVAL" envDefault:"3s"`
+}
+
+type VDIConfig struct {
+	HTTPAddr           string        `env:"VDI_HTTP_ADDR" envDefault:":8082"`
+	PublicBaseURL      string        `env:"VDI_PUBLIC_BASE_URL" envDefault:"http://localhost:8082"`
+	AccessTokenTTL     time.Duration `env:"VDI_ACCESS_TOKEN_TTL" envDefault:"15m"`
+	ConsoleURLTemplate string        `env:"VDI_CONSOLE_URL_TEMPLATE" envDefault:"/vdi/console?session={token}"`
 }
 
 func (c KIConfig) Configured() bool {

@@ -227,6 +227,37 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  vdi-gateway-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/vdi-gateway-service"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      VDI_HTTP_ADDR: ":8082"
+      VDI_PUBLIC_BASE_URL: ${VDI_PUBLIC_BASE_URL:-http://localhost:8082}
+      VDI_ACCESS_TOKEN_TTL: ${VDI_ACCESS_TOKEN_TTL:-15m}
+      VDI_CONSOLE_URL_TEMPLATE: ${VDI_CONSOLE_URL_TEMPLATE:-/vdi/console?session={token}}
+    ports:
+      - "${VDI_GATEWAY_PORT:-8082}:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   web:
     build:
       context: ./frontend

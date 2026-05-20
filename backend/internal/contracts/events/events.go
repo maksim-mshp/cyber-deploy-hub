@@ -94,6 +94,11 @@ type VDIAccessIssuedV1Payload struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+type VDIAccessRevokedV1Payload struct {
+	LabRunID string `json:"lab_run_id"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 type LifecycleCleanupScheduledV1Payload struct {
 	LabRunID string `json:"lab_run_id"`
 	DueAt    string `json:"due_at"`
