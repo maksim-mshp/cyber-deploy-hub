@@ -10,13 +10,14 @@ import (
 )
 
 type Config struct {
-	Env       string     `env:"APP_ENV" envDefault:"local"`
-	LogLevel  slog.Level `env:"LOG_LEVEL" envDefault:"info"`
-	HTTP      HTTPConfig
-	NATS      NATSConfig
-	Database  DatabaseConfig
-	OpenStack OpenStackConfig
-	KI        KIConfig
+	Env         string     `env:"APP_ENV" envDefault:"local"`
+	LogLevel    slog.Level `env:"LOG_LEVEL" envDefault:"info"`
+	HTTP        HTTPConfig
+	NATS        NATSConfig
+	Database    DatabaseConfig
+	OpenStack   OpenStackConfig
+	KI          KIConfig
+	ProjectPool ProjectPoolConfig
 }
 
 type HTTPConfig struct {
@@ -56,6 +57,11 @@ type KIConfig struct {
 	ProjectID  string        `env:"KI_PROJECT_ID"`
 	AuthToken  string        `env:"KI_AUTH_TOKEN"`
 	Timeout    time.Duration `env:"KI_TIMEOUT" envDefault:"10s"`
+}
+
+type ProjectPoolConfig struct {
+	SeedFile string `env:"PROJECT_POOL_SEED_FILE"`
+	SeedJSON string `env:"PROJECT_POOL_SEED_JSON"`
 }
 
 func (c KIConfig) Configured() bool {

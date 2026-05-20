@@ -55,6 +55,13 @@ type ProjectAllocatedV1Payload struct {
 	DomainID  string `json:"domain_id"`
 }
 
+type ProjectReleasedV1Payload struct {
+	LabRunID  string `json:"lab_run_id"`
+	ProjectID string `json:"project_id"`
+	State     string `json:"state"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type CapacityDecisionV1Payload struct {
 	LabRunID         string  `json:"lab_run_id"`
 	ProjectID        string  `json:"project_id"`
