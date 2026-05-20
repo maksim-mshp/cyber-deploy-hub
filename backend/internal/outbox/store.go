@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,9 +20,10 @@ type PostgresStore struct {
 }
 
 type Message struct {
-	ID       int64
-	Subject  string
-	Envelope contracts.Envelope
+	ID       int64              `json:"id"`
+	Subject  string             `json:"subject"`
+	Attempts int                `json:"attempts"`
+	Envelope contracts.Envelope `json:"envelope"`
 }
 
 func NewPostgresStore(db *pgxpool.Pool, schema string) (*PostgresStore, error) {
@@ -70,7 +72,7 @@ SET status = 'PROCESSING',
     updated_at = now()
 FROM picked
 WHERE outbox.id = picked.id
-RETURNING outbox.id, outbox.subject, outbox.payload`, s.table, s.table)
+RETURNING outbox.id, outbox.subject, outbox.attempts, outbox.payload`, s.table, s.table)
 
 	rows, err := s.db.Query(ctx, query, limit)
 	if err != nil {
@@ -82,7 +84,7 @@ RETURNING outbox.id, outbox.subject, outbox.payload`, s.table, s.table)
 	for rows.Next() {
 		var message Message
 		var payload []byte
-		if err := rows.Scan(&message.ID, &message.Subject, &payload); err != nil {
+		if err := rows.Scan(&message.ID, &message.Subject, &message.Attempts, &payload); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(payload, &message.Envelope); err != nil {
@@ -105,16 +107,34 @@ WHERE id = $1`, s.table)
 	return err
 }
 
-func (s *PostgresStore) MarkFailed(ctx context.Context, id int64, publishErr error) error {
+func (s *PostgresStore) MarkFailed(ctx context.Context, id int64, publishErr error, delay time.Duration) error {
+	if delay < 0 {
+		delay = 0
+	}
 	query := fmt.Sprintf(`
 UPDATE %s
 SET status = 'PENDING',
-    available_at = now() + interval '5 seconds',
+    available_at = now() + $2::interval,
+    last_error = $3,
+    updated_at = now()
+WHERE id = $1`, s.table)
+	_, err := s.db.Exec(ctx, query, id, pgInterval(delay), truncateError(publishErr))
+	return err
+}
+
+func (s *PostgresStore) MarkDeadLetter(ctx context.Context, id int64, publishErr error) error {
+	query := fmt.Sprintf(`
+UPDATE %s
+SET status = 'DLQ',
     last_error = $2,
     updated_at = now()
 WHERE id = $1`, s.table)
 	_, err := s.db.Exec(ctx, query, id, truncateError(publishErr))
 	return err
+}
+
+func pgInterval(delay time.Duration) string {
+	return fmt.Sprintf("%f seconds", delay.Seconds())
 }
 
 func truncateError(err error) string {

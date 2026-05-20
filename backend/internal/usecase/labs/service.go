@@ -81,7 +81,7 @@ func (s *Service) RequestProvision(ctx context.Context, req RequestProvision) (P
 		if err := s.outbox.Enqueue(ctx, envelope); err != nil {
 			return ProvisionAccepted{}, err
 		}
-	} else if err := s.bus.Publish(ctx, envelope.MessageType, envelope); err != nil {
+	} else if err := s.bus.Publish(ctx, commands.RequestProvisionV1.String(), envelope); err != nil {
 		return ProvisionAccepted{}, err
 	}
 

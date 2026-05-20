@@ -51,10 +51,34 @@ func (s *PostgresStore) MarkProcessed(ctx context.Context, messageID string) err
 	query := fmt.Sprintf(`
 UPDATE %s
 SET status = 'PROCESSED',
-    processed_at = now()
+    processed_at = now(),
+    updated_at = now()
 WHERE message_id = $1`, s.table)
 	_, err := s.db.Exec(ctx, query, messageID)
 	return err
+}
+
+func (s *PostgresStore) MarkFailed(ctx context.Context, messageID string, handleErr error) error {
+	query := fmt.Sprintf(`
+UPDATE %s
+SET status = 'FAILED',
+    attempts = attempts + 1,
+    last_error = $2,
+    updated_at = now()
+WHERE message_id = $1`, s.table)
+	_, err := s.db.Exec(ctx, query, messageID, truncateError(handleErr))
+	return err
+}
+
+func truncateError(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	if len(text) <= 1024 {
+		return text
+	}
+	return text[:1024]
 }
 
 func isSafeIdentifier(value string) bool {

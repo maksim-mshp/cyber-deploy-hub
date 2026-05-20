@@ -38,7 +38,7 @@ type MessageError struct {
 
 type NewEnvelopeParams struct {
 	Kind           MessageKind
-	Type           string
+	Type           Subject
 	Producer       string
 	CorrelationID  string
 	CausationID    string
@@ -68,7 +68,7 @@ func NewEnvelope(params NewEnvelopeParams) (Envelope, error) {
 	return Envelope{
 		MessageID:      messageID,
 		MessageKind:    params.Kind,
-		MessageType:    params.Type,
+		MessageType:    params.Type.String(),
 		SchemaVersion:  1,
 		OccurredAt:     time.Now().UTC(),
 		Producer:       params.Producer,
