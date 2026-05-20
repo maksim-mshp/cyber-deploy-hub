@@ -44,7 +44,19 @@ ON CONFLICT (message_id) DO NOTHING`, s.table)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+
+	query = fmt.Sprintf(`
+SELECT status
+FROM %s
+WHERE message_id = $1`, s.table)
+	var status string
+	if err := s.db.QueryRow(ctx, query, envelope.MessageID).Scan(&status); err != nil {
+		return false, err
+	}
+	return status != "PROCESSED", nil
 }
 
 func (s *PostgresStore) MarkProcessed(ctx context.Context, messageID string) error {

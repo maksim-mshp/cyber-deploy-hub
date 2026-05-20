@@ -13,6 +13,7 @@ ARG TARGETOS=linux
 ARG TARGETARCH
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/api-gateway ./cmd/api-gateway
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/core-service ./cmd/core-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.22
@@ -23,6 +24,7 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /app
 
 COPY --from=build /out/api-gateway /app/api-gateway
+COPY --from=build /out/core-service /app/core-service
 COPY --from=build /out/migrate /app/migrate
 COPY migrations /app/migrations
 
