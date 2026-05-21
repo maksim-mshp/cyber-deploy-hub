@@ -21,6 +21,7 @@ type Config struct {
 	Capacity    CapacityConfig
 	Cloud       CloudConfig
 	VDI         VDIConfig
+	Lifecycle   LifecycleConfig
 }
 
 type HTTPConfig struct {
@@ -100,6 +101,14 @@ type VDIConfig struct {
 	PublicBaseURL      string        `env:"VDI_PUBLIC_BASE_URL" envDefault:"http://localhost:8082"`
 	AccessTokenTTL     time.Duration `env:"VDI_ACCESS_TOKEN_TTL" envDefault:"15m"`
 	ConsoleURLTemplate string        `env:"VDI_CONSOLE_URL_TEMPLATE" envDefault:"/vdi/console?session={token}"`
+}
+
+type LifecycleConfig struct {
+	PollInterval             time.Duration `env:"LIFECYCLE_POLL_INTERVAL" envDefault:"5s"`
+	DueBatchSize             int           `env:"LIFECYCLE_DUE_BATCH_SIZE" envDefault:"25"`
+	DefaultLabTTL            time.Duration `env:"LIFECYCLE_DEFAULT_LAB_TTL" envDefault:"2h"`
+	DefaultFreezeTTL         time.Duration `env:"LIFECYCLE_DEFAULT_FREEZE_TTL" envDefault:"24h"`
+	DefaultCapacityThreshold float64       `env:"LIFECYCLE_DEFAULT_CAPACITY_THRESHOLD" envDefault:"90"`
 }
 
 func (c KIConfig) Configured() bool {

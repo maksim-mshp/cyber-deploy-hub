@@ -9,10 +9,15 @@ import (
 	"time"
 
 	"cyber-deploy-hub/internal/usecase/labs"
+	"cyber-deploy-hub/internal/usecase/settings"
 )
 
 type LabUsecase interface {
 	RequestProvision(ctx context.Context, req labs.RequestProvision) (labs.ProvisionAccepted, error)
+}
+
+type SettingsUsecase interface {
+	Update(ctx context.Context, req settings.UpdateRequest) (settings.UpdateAccepted, error)
 }
 
 type ReadinessChecker interface {
@@ -26,14 +31,16 @@ type OpenStackChecker interface {
 
 type Server struct {
 	labs      LabUsecase
+	settings  SettingsUsecase
 	ready     ReadinessChecker
 	openstack OpenStackChecker
 	logger    *slog.Logger
 }
 
-func NewServer(labUsecase LabUsecase, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
+func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
 	return &Server{
 		labs:      labUsecase,
+		settings:  settingsUsecase,
 		ready:     ready,
 		openstack: openstack,
 		logger:    logger,
@@ -46,6 +53,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /api/admin/openstack/ping", s.handleOpenStackPing)
 	mux.HandleFunc("POST /api/labs", s.handleRequestLab)
+	mux.HandleFunc("POST /api/admin/settings", s.handleUpdateSettings)
 	return s.withRequestLog(mux)
 }
 
@@ -102,12 +110,37 @@ func (s *Server) handleRequestLab(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, result)
 }
 
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var req updateSettingsRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	result, err := s.settings.Update(r.Context(), settings.UpdateRequest{
+		ChangedBy:      req.ChangedBy,
+		Values:         req.Values,
+		IdempotencyKey: req.IdempotencyKey,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "settings_rejected", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
 type requestLabRequest struct {
 	StudentID      string `json:"student_id"`
 	CourseID       string `json:"course_id"`
 	LabID          string `json:"lab_id"`
 	Source         string `json:"source"`
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type updateSettingsRequest struct {
+	ChangedBy      string         `json:"changed_by"`
+	Values         map[string]any `json:"values"`
+	IdempotencyKey string         `json:"idempotency_key"`
 }
 
 func readJSON(r *http.Request, dst any) error {

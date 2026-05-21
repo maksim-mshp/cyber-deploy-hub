@@ -107,6 +107,12 @@ type LifecycleScheduleCleanupV1Payload struct {
 	FreezeSeconds int64  `json:"freeze_seconds"`
 }
 
+type LifecycleFreezeLabV1Payload struct {
+	LabRunID      string `json:"lab_run_id"`
+	FreezeSeconds int64  `json:"freeze_seconds,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+}
+
 type LifecycleCancelTimerV1Payload struct {
 	LabRunID string `json:"lab_run_id"`
 	Reason   string `json:"reason,omitempty"`

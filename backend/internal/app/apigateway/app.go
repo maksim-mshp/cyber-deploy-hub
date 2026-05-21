@@ -15,6 +15,7 @@ import (
 	httpapi "cyber-deploy-hub/internal/transport/http"
 	natsbus "cyber-deploy-hub/internal/transport/nats"
 	"cyber-deploy-hub/internal/usecase/labs"
+	"cyber-deploy-hub/internal/usecase/settings"
 )
 
 const serviceName = "api-gateway-service"
@@ -52,6 +53,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	labService := labs.NewService(serviceName, bus, outboxStore)
+	settingsService := settings.NewService(serviceName, bus, outboxStore)
 	readiness := readinessChecker{db: db, bus: bus}
 	cloud := openstack.NewClient(cfg.OpenStack)
 
@@ -65,7 +67,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go dispatcher.Run(dispatcherCtx)
 	}
 
-	server := httpapi.NewServer(labService, readiness, cloud, logger)
+	server := httpapi.NewServer(labService, settingsService, readiness, cloud, logger)
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           server.Routes(),

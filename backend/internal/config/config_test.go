@@ -59,6 +59,12 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.VDI.AccessTokenTTL != 15*time.Minute {
 		t.Fatalf("VDI.AccessTokenTTL = %v, want 15m", cfg.VDI.AccessTokenTTL)
 	}
+	if cfg.Lifecycle.DefaultLabTTL != 2*time.Hour {
+		t.Fatalf("Lifecycle.DefaultLabTTL = %v, want 2h", cfg.Lifecycle.DefaultLabTTL)
+	}
+	if cfg.Lifecycle.DefaultFreezeTTL != 24*time.Hour {
+		t.Fatalf("Lifecycle.DefaultFreezeTTL = %v, want 24h", cfg.Lifecycle.DefaultFreezeTTL)
+	}
 }
 
 func TestKIConfiguredSupportsProjectCredentials(t *testing.T) {
