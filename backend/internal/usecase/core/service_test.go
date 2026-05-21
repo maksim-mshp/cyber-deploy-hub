@@ -71,6 +71,79 @@ func TestServiceAdvancesAfterProjectAllocated(t *testing.T) {
 	}
 }
 
+func TestServiceUsesLabRunResourcesAfterProjectAllocated(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			StudentID: "student-1",
+			CourseID:  "course-1",
+			LabID:     "lab-template-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunAllocatingProject,
+			Resources: commands.LabResourceProfile{
+				VCPU:    4,
+				RAMMiB:  8192,
+				DiskGiB: 80,
+			},
+		},
+	}
+	service := NewService("core-service", repo)
+	envelope := testEnvelope(t, contracts.MessageKindEvent, events.ProjectAllocatedV1, events.ProjectAllocatedV1Payload{
+		LabRunID:  "lab-1",
+		ProjectID: "project-1",
+		DomainID:  "domain-1",
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	transition := repo.lastTransition(t)
+	var nextPayload commands.CapacityCheckV1Payload
+	decodeTestPayload(t, transition.Next[0], &nextPayload)
+	if nextPayload.Resources.VCPU != 4 || nextPayload.Resources.RAMMiB != 8192 || nextPayload.Resources.DiskGiB != 80 {
+		t.Fatalf("capacity resources = %#v", nextPayload.Resources)
+	}
+}
+
+func TestServiceUsesLabRunInstancesAfterCapacityApproved(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			StudentID: "student-1",
+			CourseID:  "course-1",
+			LabID:     "lab-template-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunCheckingCapacity,
+			Instances: []commands.VMBlueprint{{
+				Name:     "custom-vm",
+				ImageID:  "image-1",
+				FlavorID: "flavor-1",
+				FixedIP:  "10.0.0.10",
+				DiskGiB:  30,
+			}},
+		},
+	}
+	service := NewService("core-service", repo)
+	envelope := testEnvelope(t, contracts.MessageKindEvent, events.CapacityApprovedV1, events.CapacityDecisionV1Payload{
+		LabRunID:  "lab-1",
+		ProjectID: "project-1",
+		Approved:  true,
+		Threshold: 90,
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	transition := repo.lastTransition(t)
+	var nextPayload commands.CloudDeployVDIV1Payload
+	decodeTestPayload(t, transition.Next[0], &nextPayload)
+	if len(nextPayload.Instances) != 1 || nextPayload.Instances[0].Name != "custom-vm" || nextPayload.Instances[0].ImageID != "image-1" {
+		t.Fatalf("cloud deploy instances = %#v", nextPayload.Instances)
+	}
+}
+
 func TestServiceFailsAndReleasesProjectWhenCapacityDenied(t *testing.T) {
 	repo := &fakeRepository{}
 	service := NewService("core-service", repo)

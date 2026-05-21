@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"cyber-deploy-hub/internal/contracts/commands"
+	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
 	"cyber-deploy-hub/internal/usecase/readmodel"
 	"cyber-deploy-hub/internal/usecase/settings"
@@ -26,6 +28,12 @@ type LabUsecase interface {
 
 type SettingsUsecase interface {
 	Update(ctx context.Context, req settings.UpdateRequest) (settings.UpdateAccepted, error)
+}
+
+type LabCatalogUsecase interface {
+	List(ctx context.Context, includeDisabled bool) (labcatalog.ListResult, error)
+	Get(ctx context.Context, courseID string, labID string) (labcatalog.Definition, bool, error)
+	Update(ctx context.Context, req labcatalog.UpdateRequest) (labcatalog.UpdateResult, error)
 }
 
 type ReadinessChecker interface {
@@ -52,16 +60,18 @@ type ReadModel interface {
 type Server struct {
 	labs      LabUsecase
 	settings  SettingsUsecase
+	catalog   LabCatalogUsecase
 	read      ReadModel
 	ready     ReadinessChecker
 	openstack OpenStackChecker
 	logger    *slog.Logger
 }
 
-func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, read ReadModel, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
+func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog LabCatalogUsecase, read ReadModel, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
 	return &Server{
 		labs:      labUsecase,
 		settings:  settingsUsecase,
+		catalog:   catalog,
 		read:      read,
 		ready:     ready,
 		openstack: openstack,
@@ -74,6 +84,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /api/admin/openstack/ping", s.handleOpenStackPing)
+	mux.HandleFunc("GET /api/lab-definitions", s.handleListAvailableLabDefinitions)
 	mux.HandleFunc("GET /api/labs", s.handleListLabs)
 	mux.HandleFunc("POST /api/labs", s.handleRequestLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}", s.handleGetLab)
@@ -88,6 +99,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/settings", s.handleGetSettings)
 	mux.HandleFunc("POST /api/admin/settings", s.handleUpdateSettings)
 	mux.HandleFunc("GET /api/admin/project-pool", s.handleProjectPool)
+	mux.HandleFunc("GET /api/teacher/lab-definitions", s.handleListTeacherLabDefinitions)
+	mux.HandleFunc("POST /api/teacher/lab-definitions", s.handleUpdateTeacherLabDefinition)
 	return s.withRequestLog(mux)
 }
 
@@ -122,18 +135,46 @@ func (s *Server) handleOpenStackPing(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleListAvailableLabDefinitions(w http.ResponseWriter, r *http.Request) {
+	if s.catalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
+		return
+	}
+	view, err := s.catalog.List(r.Context(), false)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lab_catalog_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
 func (s *Server) handleRequestLab(w http.ResponseWriter, r *http.Request) {
 	var req requestLabRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	if s.catalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
+		return
+	}
+	definition, found, err := s.catalog.Get(r.Context(), req.CourseID, req.LabID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lab_catalog_failed", err.Error())
+		return
+	}
+	if !found || !definition.Enabled {
+		writeError(w, http.StatusNotFound, "lab_not_available", "Lab definition is not available")
+		return
+	}
 
 	result, err := s.labs.RequestProvision(r.Context(), labs.RequestProvision{
 		StudentID:      req.StudentID,
-		CourseID:       req.CourseID,
-		LabID:          req.LabID,
+		CourseID:       definition.CourseID,
+		LabID:          definition.LabID,
 		Source:         req.Source,
+		Resources:      definition.Resources,
+		Instances:      definition.Instances,
 		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
@@ -375,12 +416,65 @@ func (s *Server) handleProjectPool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
+func (s *Server) handleListTeacherLabDefinitions(w http.ResponseWriter, r *http.Request) {
+	if s.catalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
+		return
+	}
+	view, err := s.catalog.List(r.Context(), true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lab_catalog_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleUpdateTeacherLabDefinition(w http.ResponseWriter, r *http.Request) {
+	if s.catalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
+		return
+	}
+	var req updateLabDefinitionRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, err := s.catalog.Update(r.Context(), labcatalog.UpdateRequest{
+		ChangedBy: req.ChangedBy,
+		Definition: labcatalog.Definition{
+			CourseID:    req.CourseID,
+			LabID:       req.LabID,
+			Title:       req.Title,
+			Description: req.Description,
+			Enabled:     req.Enabled,
+			Resources:   req.Resources,
+			Instances:   req.Instances,
+		},
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "lab_definition_rejected", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 type requestLabRequest struct {
 	StudentID      string `json:"student_id"`
 	CourseID       string `json:"course_id"`
 	LabID          string `json:"lab_id"`
 	Source         string `json:"source"`
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type updateLabDefinitionRequest struct {
+	CourseID    string                      `json:"course_id"`
+	LabID       string                      `json:"lab_id"`
+	Title       string                      `json:"title"`
+	Description string                      `json:"description"`
+	Enabled     bool                        `json:"enabled"`
+	Resources   commands.LabResourceProfile `json:"resources"`
+	Instances   []commands.VMBlueprint      `json:"instances"`
+	ChangedBy   string                      `json:"changed_by"`
 }
 
 type labActionRequest struct {

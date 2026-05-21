@@ -32,11 +32,13 @@ const (
 )
 
 type RequestProvisionV1Payload struct {
-	LabRunID  string `json:"lab_run_id"`
-	StudentID string `json:"student_id"`
-	CourseID  string `json:"course_id"`
-	LabID     string `json:"lab_id"`
-	Source    string `json:"source"`
+	LabRunID  string             `json:"lab_run_id"`
+	StudentID string             `json:"student_id"`
+	CourseID  string             `json:"course_id"`
+	LabID     string             `json:"lab_id"`
+	Source    string             `json:"source"`
+	Resources LabResourceProfile `json:"resources,omitempty"`
+	Instances []VMBlueprint      `json:"instances,omitempty"`
 }
 
 type LabRunCommandPayload struct {

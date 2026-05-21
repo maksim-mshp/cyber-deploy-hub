@@ -26,12 +26,20 @@ func NewPostgresRepository(db *pgxpool.Pool) (*PostgresRepository, error) {
 }
 
 func (r *PostgresRepository) StartProvisioning(ctx context.Context, req commands.RequestProvisionV1Payload, command contracts.Envelope, next contracts.Envelope) error {
+	resources, err := json.Marshal(req.Resources)
+	if err != nil {
+		return err
+	}
+	instances, err := json.Marshal(req.Instances)
+	if err != nil {
+		return err
+	}
 	return r.tx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
-INSERT INTO core.lab_runs (id, student_id, course_id, lab_id, state)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO core.lab_runs (id, student_id, course_id, lab_id, state, resources, instances)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO NOTHING`,
-			req.LabRunID, req.StudentID, req.CourseID, req.LabID, string(domain.LabRunRequested)); err != nil {
+			req.LabRunID, req.StudentID, req.CourseID, req.LabID, string(domain.LabRunRequested), resources, instances); err != nil {
 			return err
 		}
 
@@ -175,8 +183,17 @@ WHERE id = $1`,
 func (r *PostgresRepository) LoadLabRun(ctx context.Context, labRunID string) (LabRun, error) {
 	var labRun LabRun
 	var state string
+	var rawResources []byte
+	var rawInstances []byte
 	err := r.db.QueryRow(ctx, `
-SELECT id::text, student_id, course_id, lab_id, COALESCE(project_id, ''), state
+SELECT id::text,
+       student_id,
+       course_id,
+       lab_id,
+       COALESCE(project_id, ''),
+       state,
+       COALESCE(resources, '{}'::jsonb),
+       COALESCE(instances, '[]'::jsonb)
 FROM core.lab_runs
 WHERE id = $1`, labRunID).Scan(
 		&labRun.ID,
@@ -185,9 +202,17 @@ WHERE id = $1`, labRunID).Scan(
 		&labRun.LabID,
 		&labRun.ProjectID,
 		&state,
+		&rawResources,
+		&rawInstances,
 	)
 	if err != nil {
 		return LabRun{}, err
+	}
+	if err := json.Unmarshal(rawResources, &labRun.Resources); err != nil {
+		return LabRun{}, fmt.Errorf("decode lab resources: %w", err)
+	}
+	if err := json.Unmarshal(rawInstances, &labRun.Instances); err != nil {
+		return LabRun{}, fmt.Errorf("decode lab instances: %w", err)
 	}
 	labRun.State = domain.LabRunState(state)
 	return labRun, nil

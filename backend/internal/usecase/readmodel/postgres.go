@@ -2,9 +2,11 @@ package readmodel
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/url"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,7 +36,15 @@ SELECT id::text,
        COALESCE(failure_code, ''),
        COALESCE(failure_message, ''),
        created_at,
-       updated_at
+       updated_at,
+       (
+           SELECT due_at
+           FROM lifecycle.timers
+           WHERE lab_run_id = core.lab_runs.id
+             AND kind = 'CLEANUP'
+             AND state = 'SCHEDULED'
+           LIMIT 1
+       ) AS cleanup_due_at
 FROM core.lab_runs
 ORDER BY updated_at DESC
 LIMIT $1`, limit)
@@ -46,6 +56,7 @@ LIMIT $1`, limit)
 	view := LabRunsView{Labs: []LabRunView{}}
 	for rows.Next() {
 		var item LabRunView
+		var cleanupDueAt sql.NullTime
 		if err := rows.Scan(
 			&item.ID,
 			&item.StudentID,
@@ -56,9 +67,11 @@ LIMIT $1`, limit)
 			&item.FailureMessage,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&cleanupDueAt,
 		); err != nil {
 			return LabRunsView{}, err
 		}
+		item.CleanupDueAt = nullTimePtr(cleanupDueAt)
 		view.Labs = append(view.Labs, item)
 	}
 	return view, rows.Err()
@@ -66,6 +79,7 @@ LIMIT $1`, limit)
 
 func (r *PostgresReader) GetLabRun(ctx context.Context, labRunID string) (LabRunView, bool, error) {
 	var view LabRunView
+	var cleanupDueAt sql.NullTime
 	err := r.db.QueryRow(ctx, `
 SELECT id::text,
        student_id,
@@ -75,7 +89,15 @@ SELECT id::text,
        COALESCE(failure_code, ''),
        COALESCE(failure_message, ''),
        created_at,
-       updated_at
+       updated_at,
+       (
+           SELECT due_at
+           FROM lifecycle.timers
+           WHERE lab_run_id = core.lab_runs.id
+             AND kind = 'CLEANUP'
+             AND state = 'SCHEDULED'
+           LIMIT 1
+       ) AS cleanup_due_at
 FROM core.lab_runs
 WHERE id = $1`, labRunID).Scan(
 		&view.ID,
@@ -87,6 +109,7 @@ WHERE id = $1`, labRunID).Scan(
 		&view.FailureMessage,
 		&view.CreatedAt,
 		&view.UpdatedAt,
+		&cleanupDueAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LabRunView{}, false, nil
@@ -94,6 +117,7 @@ WHERE id = $1`, labRunID).Scan(
 	if err != nil {
 		return LabRunView{}, false, err
 	}
+	view.CleanupDueAt = nullTimePtr(cleanupDueAt)
 	events, err := r.ListLabRunEvents(ctx, labRunID, 0, 50)
 	if err != nil {
 		return LabRunView{}, false, err
@@ -196,6 +220,14 @@ LIMIT $3`, labRunID, afterID, limit)
 		events[i].Payload = publicEventPayload(events[i].MessageType, events[i].Payload)
 	}
 	return events, nil
+}
+
+func nullTimePtr(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	next := value.Time
+	return &next
 }
 
 func instanceVDIAccess(base VDIAccessView, instance LabInstanceView) VDIAccessView {

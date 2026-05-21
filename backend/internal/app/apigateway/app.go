@@ -14,6 +14,7 @@ import (
 	"cyber-deploy-hub/internal/outbox"
 	httpapi "cyber-deploy-hub/internal/transport/http"
 	natsbus "cyber-deploy-hub/internal/transport/nats"
+	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
 	"cyber-deploy-hub/internal/usecase/readmodel"
 	"cyber-deploy-hub/internal/usecase/settings"
@@ -31,6 +32,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	var db *pgxpool.Pool
 	var outboxStore *outbox.PostgresStore
 	var reader *readmodel.PostgresReader
+	var catalogService *labcatalog.Service
 	if cfg.Database.URL != "" {
 		dbConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
 		if err != nil {
@@ -56,6 +58,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		catalogRepo, err := labcatalog.NewPostgresRepository(db)
+		if err != nil {
+			return err
+		}
+		catalogService, err = labcatalog.NewService(catalogRepo)
+		if err != nil {
+			return err
+		}
 	}
 
 	labService := labs.NewService(serviceName, bus, outboxStore)
@@ -73,7 +83,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go dispatcher.Run(dispatcherCtx)
 	}
 
-	server := httpapi.NewServer(labService, settingsService, reader, readiness, cloud, logger)
+	server := httpapi.NewServer(labService, settingsService, catalogService, reader, readiness, cloud, logger)
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           server.Routes(),

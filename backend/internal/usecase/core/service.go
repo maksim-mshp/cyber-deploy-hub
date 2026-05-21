@@ -50,6 +50,8 @@ type LabRun struct {
 	LabID     string
 	ProjectID string
 	State     domain.LabRunState
+	Resources commands.LabResourceProfile
+	Instances []commands.VMBlueprint
 }
 
 type Service struct {
@@ -132,15 +134,15 @@ func (s *Service) handleProjectAllocated(ctx context.Context, envelope contracts
 	if err := decodePayload(envelope, &payload); err != nil {
 		return err
 	}
+	labRun, err := s.repo.LoadLabRun(ctx, payload.LabRunID)
+	if err != nil {
+		return err
+	}
 
 	next, err := s.newCommand(envelope, commands.CapacityCheckV1, commands.CapacityCheckV1Payload{
 		LabRunID:  payload.LabRunID,
 		ProjectID: payload.ProjectID,
-		Resources: commands.LabResourceProfile{
-			VCPU:    9,
-			RAMMiB:  16 * 1024,
-			DiskGiB: 214,
-		},
+		Resources: resourceProfileOrDefault(labRun.Resources),
 	})
 	if err != nil {
 		return err
@@ -260,11 +262,15 @@ func (s *Service) handleCapacityApproved(ctx context.Context, envelope contracts
 	if err := decodePayload(envelope, &payload); err != nil {
 		return err
 	}
+	labRun, err := s.repo.LoadLabRun(ctx, payload.LabRunID)
+	if err != nil {
+		return err
+	}
 
 	next, err := s.newCommand(envelope, commands.CloudDeployVDIV1, commands.CloudDeployVDIV1Payload{
 		LabRunID:  payload.LabRunID,
 		ProjectID: payload.ProjectID,
-		Instances: []commands.VMBlueprint{},
+		Instances: append([]commands.VMBlueprint(nil), labRun.Instances...),
 	})
 	if err != nil {
 		return err
@@ -307,6 +313,17 @@ func (s *Service) handleCapacityDenied(ctx context.Context, envelope contracts.E
 		Event:    envelope,
 		Next:     []contracts.Envelope{next, failed},
 	})
+}
+
+func resourceProfileOrDefault(profile commands.LabResourceProfile) commands.LabResourceProfile {
+	if profile.VCPU > 0 && profile.RAMMiB > 0 && profile.DiskGiB > 0 {
+		return profile
+	}
+	return commands.LabResourceProfile{
+		VCPU:    9,
+		RAMMiB:  16 * 1024,
+		DiskGiB: 214,
+	}
 }
 
 func (s *Service) handleCloudVDIDeployed(ctx context.Context, envelope contracts.Envelope) error {

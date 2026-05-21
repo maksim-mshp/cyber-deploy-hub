@@ -31,6 +31,8 @@ type RequestProvision struct {
 	CourseID       string
 	LabID          string
 	Source         string
+	Resources      commands.LabResourceProfile
+	Instances      []commands.VMBlueprint
 	IdempotencyKey string
 }
 
@@ -78,6 +80,8 @@ func (s *Service) RequestProvision(ctx context.Context, req RequestProvision) (P
 		CourseID:  req.CourseID,
 		LabID:     req.LabID,
 		Source:    req.source(),
+		Resources: req.Resources,
+		Instances: append([]commands.VMBlueprint(nil), req.Instances...),
 	}
 
 	envelope, err := contracts.NewEnvelope(contracts.NewEnvelopeParams{
