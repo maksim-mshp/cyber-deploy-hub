@@ -2,8 +2,16 @@ package lmsgateway
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -99,7 +107,123 @@ func TestMoodleSSORedirectsToExistingActiveLabWithoutNewProvision(t *testing.T) 
 	}
 }
 
+func TestLTILoginInitiationRedirectsToPlatform(t *testing.T) {
+	lti := testLTIService(t, "https://moodle.example/mod/lti/certs.php")
+	server, _ := testServerWithLTI(t, &testLMSRepository{}, lti)
+	form := url.Values{
+		"iss":              {"https://moodle.example"},
+		"client_id":        {"client-1"},
+		"login_hint":       {"login-hint-1"},
+		"target_link_uri":  {"https://tool.example/lti/1p3/launch"},
+		"lti_message_hint": {"message-hint-1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/lti/1p3/login", strings.NewReader(form.Encode()))
+	req.Host = "tool.example"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse location: %v", err)
+	}
+	if location.Scheme != "https" || location.Host != "moodle.example" || location.Path != "/mod/lti/auth.php" {
+		t.Fatalf("location = %q", location.String())
+	}
+	query := location.Query()
+	if query.Get("response_type") != "id_token" ||
+		query.Get("response_mode") != "form_post" ||
+		query.Get("prompt") != "none" ||
+		query.Get("client_id") != "client-1" ||
+		query.Get("login_hint") != "login-hint-1" ||
+		query.Get("lti_message_hint") != "message-hint-1" ||
+		query.Get("redirect_uri") != "https://tool.example/lti/1p3/launch" ||
+		query.Get("state") == "" ||
+		query.Get("nonce") == "" {
+		t.Fatalf("unexpected login query: %s", location.RawQuery)
+	}
+}
+
+func TestLTILaunchIssuesStudentSessionCookieAndRedirects(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"keys": []any{jwkFromPublicKey("kid-1", &privateKey.PublicKey)}})
+	}))
+	t.Cleanup(jwksServer.Close)
+
+	lti := testLTIService(t, jwksServer.URL)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	lti.now = func() time.Time { return now }
+	server, sessionAuth := testServerWithLTI(t, &testLMSRepository{}, lti)
+	state, err := lti.signState(ltiState{
+		Nonce:         "nonce-1",
+		Issuer:        "https://moodle.example",
+		TargetLinkURI: "https://tool.example/lti/1p3/launch",
+		ExpiresAt:     now.Add(10 * time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("signState: %v", err)
+	}
+	idToken := signedIDToken(t, privateKey, "kid-1", map[string]any{
+		"iss":                "https://moodle.example",
+		"sub":                "student-ext",
+		"aud":                "client-1",
+		"exp":                now.Add(time.Minute).Unix(),
+		"iat":                now.Unix(),
+		"nonce":              "nonce-1",
+		"jti":                "jwt-1",
+		"name":               "Student One",
+		ltiClaimDeploymentID: "deployment-1",
+		ltiClaimMessageType:  ltiMessageTypeResourceLinkRequest,
+		ltiClaimVersion:      "1.3.0",
+		ltiClaimContext: map[string]any{
+			"id":    "course-ext",
+			"title": "Course",
+		},
+		ltiClaimResourceLink: map[string]any{
+			"id":    "assignment-ext",
+			"title": "Lab 3",
+		},
+	})
+	form := url.Values{"id_token": {idToken}, "state": {state}}
+	req := httptest.NewRequest(http.MethodPost, "/lti/1p3/launch", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); !strings.Contains(location, "launch_status=ACCEPTED") {
+		t.Fatalf("location = %q", location)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %#v", cookies)
+	}
+	principal, err := sessionAuth.AuthenticateToken(cookies[0].Value)
+	if err != nil {
+		t.Fatalf("AuthenticateToken: %v", err)
+	}
+	if principal.Subject != "moodle:student-ext" || principal.Role != authn.RoleStudent || principal.Source != "lti" || principal.DisplayName != "Student One" {
+		t.Fatalf("principal = %#v", principal)
+	}
+}
+
 func testServer(t *testing.T, repo *testLMSRepository) (*Server, *authn.Service) {
+	return testServerWithLTI(t, repo, nil)
+}
+
+func testServerWithLTI(t *testing.T, repo *testLMSRepository, lti *LTIService) (*Server, *authn.Service) {
 	t.Helper()
 
 	mapper, err := lmsusecase.NewMapper(`{"course-ext":"course-3"}`, `{"assignment-ext":"lab-3"}`)
@@ -128,7 +252,56 @@ func testServer(t *testing.T, repo *testLMSRepository) (*Server, *authn.Service)
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}
-	return NewServer(service, authenticator, sessionAuth, "/", readinessChecker{}, nil), sessionAuth
+	return NewServer(service, authenticator, lti, sessionAuth, "/", readinessChecker{}, nil), sessionAuth
+}
+
+func testLTIService(t *testing.T, jwksURL string) *LTIService {
+	t.Helper()
+	lti, err := NewLTIService(LTIConfig{
+		PlatformIssuer:   "https://moodle.example",
+		ClientID:         "client-1",
+		AuthLoginURL:     "https://moodle.example/mod/lti/auth.php",
+		JWKSURL:          jwksURL,
+		DeploymentIDs:    []string{"deployment-1"},
+		StateSecret:      "0123456789abcdef",
+		AllowedClockSkew: time.Minute,
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewLTIService: %v", err)
+	}
+	return lti
+}
+
+func signedIDToken(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
+	t.Helper()
+	header := map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"}
+	signingInput := encodeJWTPart(t, header) + "." + encodeJWTPart(t, claims)
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatalf("SignPKCS1v15: %v", err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func encodeJWTPart(t *testing.T, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func jwkFromPublicKey(kid string, key *rsa.PublicKey) map[string]string {
+	return map[string]string{
+		"kty": "RSA",
+		"kid": kid,
+		"alg": "RS256",
+		"use": "sig",
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	}
 }
 
 type testLMSRepository struct {

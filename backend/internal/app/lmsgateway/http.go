@@ -19,17 +19,18 @@ import (
 type Server struct {
 	service     *lmsusecase.Service
 	auth        *lmsusecase.Authenticator
+	lti         *LTIService
 	sessionAuth *authn.Service
 	frontendURL string
 	ready       readinessChecker
 	logger      *slog.Logger
 }
 
-func NewServer(service *lmsusecase.Service, auth *lmsusecase.Authenticator, sessionAuth *authn.Service, frontendURL string, ready readinessChecker, logger *slog.Logger) *Server {
+func NewServer(service *lmsusecase.Service, auth *lmsusecase.Authenticator, lti *LTIService, sessionAuth *authn.Service, frontendURL string, ready readinessChecker, logger *slog.Logger) *Server {
 	if frontendURL == "" {
 		frontendURL = "/"
 	}
-	return &Server{service: service, auth: auth, sessionAuth: sessionAuth, frontendURL: frontendURL, ready: ready, logger: logger}
+	return &Server{service: service, auth: auth, lti: lti, sessionAuth: sessionAuth, frontendURL: frontendURL, ready: ready, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -40,7 +41,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /lms/moodle/launch", s.handleMoodleLaunch)
 	mux.HandleFunc("POST /lms/moodle/sso", s.handleMoodleSSO)
 	mux.HandleFunc("GET /lms/moodle/launch/{launchID}/result", s.handleMoodleResult)
-	mux.HandleFunc("GET /lti/1p3/tool-configuration", s.handleLTISkeleton)
+	mux.HandleFunc("GET /lti/1p3/login", s.handleLTILogin)
+	mux.HandleFunc("POST /lti/1p3/login", s.handleLTILogin)
+	mux.HandleFunc("POST /lti/1p3/launch", s.handleLTILaunch)
+	mux.HandleFunc("GET /lti/1p3/tool-configuration", s.handleLTIToolConfiguration)
 	return s.withRequestLog(mux)
 }
 
@@ -139,16 +143,7 @@ func (s *Server) handleMoodleSSO(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_failed", err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.sessionAuth.CookieName(),
-		Value:    token,
-		Path:     "/",
-		Expires:  expiresAt,
-		MaxAge:   int(time.Until(expiresAt).Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   s.sessionAuth.CookieSecure(),
-	})
+	http.SetCookie(w, s.sessionCookie(token, expiresAt))
 	http.Redirect(w, r, s.redirectURL(result), http.StatusSeeOther)
 }
 
@@ -169,14 +164,6 @@ func (s *Server) handleMoodleResult(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) handleLTISkeleton(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":  "cyber-deploy-hub",
-		"status":  "skeleton",
-		"message": "LTI 1.3 launch validation is intentionally not enabled in MVP; use POST /lms/moodle/launch for the REST gateway.",
-	})
-}
-
 func (s *Server) redirectURL(result lmsusecase.LaunchAccepted) string {
 	parsed, err := url.Parse(s.frontendURL)
 	if err != nil {
@@ -188,6 +175,23 @@ func (s *Server) redirectURL(result lmsusecase.LaunchAccepted) string {
 	query.Set("launch_status", result.Status)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
+}
+
+func (s *Server) sessionCookie(token string, expiresAt time.Time) *http.Cookie {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	return &http.Cookie{
+		Name:     s.sessionAuth.CookieName(),
+		Value:    token,
+		Path:     "/",
+		Expires:  expiresAt,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.sessionAuth.CookieSecure(),
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

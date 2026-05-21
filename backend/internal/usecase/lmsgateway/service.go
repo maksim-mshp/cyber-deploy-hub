@@ -134,6 +134,7 @@ func defaultIdempotencyKey(req LaunchRequest) string {
 		strings.TrimSpace(req.MoodleUserID),
 		strings.TrimSpace(req.MoodleCourseID),
 		strings.TrimSpace(req.MoodleAssignmentID),
+		uuid.NewString(),
 	}, ":")
 }
 

@@ -80,6 +80,19 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	ltiService, err := NewLTIService(LTIConfig{
+		PlatformIssuer:   cfg.LMS.LTIPlatformIssuer,
+		ClientID:         cfg.LMS.LTIClientID,
+		AuthLoginURL:     cfg.LMS.LTIAuthLoginURL,
+		JWKSURL:          cfg.LMS.LTIJWKSURL,
+		RedirectURL:      cfg.LMS.LTIRedirectURL,
+		DeploymentIDs:    splitDeploymentIDs(cfg.LMS.LTIDeploymentIDs),
+		StateSecret:      cfg.Auth.SessionSecret,
+		AllowedClockSkew: cfg.LMS.AllowedClockSkew,
+	}, nil)
+	if err != nil {
+		return err
+	}
 
 	dispatcherCtx, stopDispatcher := context.WithCancel(ctx)
 	defer stopDispatcher()
@@ -89,7 +102,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	})
 	go dispatcher.Run(dispatcherCtx)
 
-	server := NewServer(service, authenticator, sessionAuth, cfg.Auth.FrontendURL, readinessChecker{db: db, bus: bus}, logger)
+	server := NewServer(service, authenticator, ltiService, sessionAuth, cfg.Auth.FrontendURL, readinessChecker{db: db, bus: bus}, logger)
 	httpServer := &http.Server{
 		Addr:              cfg.LMS.HTTPAddr,
 		Handler:           server.Routes(),

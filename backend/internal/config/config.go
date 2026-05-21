@@ -126,6 +126,12 @@ type LMSConfig struct {
 	CourseMapJSON     string        `env:"LMS_COURSE_MAP_JSON"`
 	AssignmentMapJSON string        `env:"LMS_ASSIGNMENT_MAP_JSON"`
 	DefaultSource     string        `env:"LMS_DEFAULT_SOURCE" envDefault:"moodle"`
+	LTIPlatformIssuer string        `env:"LTI_PLATFORM_ISSUER"`
+	LTIClientID       string        `env:"LTI_CLIENT_ID"`
+	LTIAuthLoginURL   string        `env:"LTI_AUTH_LOGIN_URL"`
+	LTIJWKSURL        string        `env:"LTI_JWKS_URL"`
+	LTIRedirectURL    string        `env:"LTI_REDIRECT_URL"`
+	LTIDeploymentIDs  string        `env:"LTI_DEPLOYMENT_IDS"`
 }
 
 type AuthConfig struct {

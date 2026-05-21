@@ -110,14 +110,55 @@ func TestServiceLaunchReportsActiveLabWithoutNewCommand(t *testing.T) {
 	}
 }
 
+func TestServiceLaunchGeneratesFreshDefaultIdempotencyKey(t *testing.T) {
+	t.Parallel()
+
+	mapper, err := NewMapper(`{"course-ext":"course-linux"}`, `{"assignment-ext":"LAB-02"}`)
+	if err != nil {
+		t.Fatalf("NewMapper: %v", err)
+	}
+	repo := &fakeRepository{}
+	catalog := &fakeCatalog{definition: labcatalog.Definition{
+		CourseID:  "course-linux",
+		LabID:     "LAB-02",
+		Enabled:   true,
+		Resources: commands.LabResourceProfile{VCPU: 2, RAMMiB: 4096, DiskGiB: 40},
+		Instances: []commands.VMBlueprint{{Name: "vm-1", ImageID: "image-1", FlavorID: "flavor-1", DiskGiB: 20}},
+	}}
+	service, err := NewService("lms-gateway-service", "moodle", mapper, repo, catalog)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	req := LaunchRequest{
+		MoodleUserID:       "student-ext",
+		MoodleCourseID:     "course-ext",
+		MoodleAssignmentID: "assignment-ext",
+	}
+
+	if _, _, err := service.Launch(context.Background(), req); err != nil {
+		t.Fatalf("first Launch: %v", err)
+	}
+	if _, _, err := service.Launch(context.Background(), req); err != nil {
+		t.Fatalf("second Launch: %v", err)
+	}
+	if len(repo.idempotencyKeys) != 2 {
+		t.Fatalf("idempotency keys = %#v", repo.idempotencyKeys)
+	}
+	if repo.idempotencyKeys[0] == repo.idempotencyKeys[1] {
+		t.Fatalf("default idempotency key must be fresh, got %q", repo.idempotencyKeys[0])
+	}
+}
+
 type fakeRepository struct {
-	command  contracts.Envelope
-	saved    LaunchRecord
-	inserted bool
+	command         contracts.Envelope
+	saved           LaunchRecord
+	inserted        bool
+	idempotencyKeys []string
 }
 
 func (r *fakeRepository) SaveLaunch(_ context.Context, launch LaunchRecord, command contracts.Envelope) (LaunchRecord, bool, error) {
 	r.command = command
+	r.idempotencyKeys = append(r.idempotencyKeys, launch.IdempotencyKey)
 	if r.saved.ID != "" {
 		return r.saved, r.inserted, nil
 	}
