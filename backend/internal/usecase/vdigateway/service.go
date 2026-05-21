@@ -23,30 +23,38 @@ type Repository interface {
 	RevokeByLabRun(ctx context.Context, command contracts.Envelope, labRunID string, reason string, event contracts.Envelope) error
 	FindToken(ctx context.Context, tokenHash string) (AccessToken, bool, error)
 	FindInstanceTarget(ctx context.Context, labRunID string, serverID string) (InstanceTarget, bool, error)
+	FindDefaultInstanceTarget(ctx context.Context, labRunID string) (InstanceTarget, bool, error)
 	MarkExpired(ctx context.Context, tokenHash string) error
 	RecordOpen(ctx context.Context, tokenHash string, labRunID string, openedAt time.Time, remoteAddr string, userAgent string) error
 }
 
+type ConsoleProvider interface {
+	ConsoleURL(ctx context.Context, serverID string) (string, error)
+}
+
 type Service struct {
-	producer           string
-	repo               Repository
-	tokenGenerator     TokenGenerator
-	clock              clock
-	accessTokenTTL     time.Duration
-	publicBaseURL      string
-	consoleURLTemplate string
+	producer        string
+	repo            Repository
+	consoleProvider ConsoleProvider
+	tokenGenerator  TokenGenerator
+	clock           clock
+	accessTokenTTL  time.Duration
+	publicBaseURL   string
 }
 
-func NewService(producer string, repo Repository, cfg config.VDIConfig) (*Service, error) {
-	return NewServiceWithDeps(producer, repo, cfg, SecureTokenGenerator{}, systemClock{})
+func NewService(producer string, repo Repository, cfg config.VDIConfig, consoleProvider ConsoleProvider) (*Service, error) {
+	return NewServiceWithDeps(producer, repo, cfg, consoleProvider, SecureTokenGenerator{}, systemClock{})
 }
 
-func NewServiceWithDeps(producer string, repo Repository, cfg config.VDIConfig, generator TokenGenerator, clk clock) (*Service, error) {
+func NewServiceWithDeps(producer string, repo Repository, cfg config.VDIConfig, consoleProvider ConsoleProvider, generator TokenGenerator, clk clock) (*Service, error) {
 	if strings.TrimSpace(producer) == "" {
 		return nil, errors.New("producer is empty")
 	}
 	if repo == nil {
 		return nil, errors.New("repository is nil")
+	}
+	if consoleProvider == nil {
+		return nil, errors.New("console provider is nil")
 	}
 	if generator == nil {
 		return nil, errors.New("token generator is nil")
@@ -58,21 +66,14 @@ func NewServiceWithDeps(producer string, repo Repository, cfg config.VDIConfig, 
 	if ttl <= 0 {
 		ttl = 15 * time.Minute
 	}
-	template := strings.TrimSpace(cfg.ConsoleURLTemplate)
-	if template == "" {
-		template = "/vdi/console?session={token}"
-	}
-	if !strings.Contains(template, "{token}") {
-		return nil, errors.New("VDI_CONSOLE_URL_TEMPLATE must contain {token}")
-	}
 	return &Service{
-		producer:           producer,
-		repo:               repo,
-		tokenGenerator:     generator,
-		clock:              clk,
-		accessTokenTTL:     ttl,
-		publicBaseURL:      strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
-		consoleURLTemplate: template,
+		producer:        producer,
+		repo:            repo,
+		consoleProvider: consoleProvider,
+		tokenGenerator:  generator,
+		clock:           clk,
+		accessTokenTTL:  ttl,
+		publicBaseURL:   strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
 	}, nil
 }
 
@@ -177,11 +178,15 @@ func (s *Service) OpenSession(ctx context.Context, req OpenSessionRequest) (Sess
 	if err != nil {
 		return SessionLaunch{}, err
 	}
+	consoleURL, err := s.consoleProvider.ConsoleURL(ctx, target.ServerID)
+	if err != nil {
+		return SessionLaunch{}, fmt.Errorf("open vdi console for server %s: %w", target.ServerID, err)
+	}
 	if err := s.repo.RecordOpen(ctx, hash, token.LabRunID, now, req.RemoteAddr, req.UserAgent); err != nil {
 		return SessionLaunch{}, err
 	}
 	return SessionLaunch{
-		LaunchURL:    s.consoleURL(req.Token, target),
+		LaunchURL:    consoleURL,
 		ExpiresAt:    token.ExpiresAt,
 		ServerID:     target.ServerID,
 		InstanceName: target.Name,
@@ -261,7 +266,14 @@ func (s *Service) newEvent(cause contracts.Envelope, subject contracts.Subject, 
 func (s *Service) resolveTarget(ctx context.Context, labRunID string, req OpenSessionRequest) (InstanceTarget, error) {
 	serverID := strings.TrimSpace(req.ServerID)
 	if serverID == "" {
-		return InstanceTarget{}, nil
+		target, found, err := s.repo.FindDefaultInstanceTarget(ctx, labRunID)
+		if err != nil {
+			return InstanceTarget{}, err
+		}
+		if !found || target.State != "ACTIVE" || target.ServerID == "" {
+			return InstanceTarget{}, ErrInstanceNotFound
+		}
+		return target, nil
 	}
 	target, found, err := s.repo.FindInstanceTarget(ctx, labRunID, serverID)
 	if err != nil {
@@ -274,24 +286,6 @@ func (s *Service) resolveTarget(ctx context.Context, labRunID string, req OpenSe
 		target.Name = strings.TrimSpace(req.InstanceName)
 	}
 	return target, nil
-}
-
-func (s *Service) consoleURL(token string, target InstanceTarget) string {
-	rawURL := strings.ReplaceAll(s.consoleURLTemplate, "{token}", url.QueryEscape(token))
-	if target.ServerID == "" {
-		return rawURL
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	query := parsed.Query()
-	query.Set("server_id", target.ServerID)
-	if target.Name != "" {
-		query.Set("instance_name", target.Name)
-	}
-	parsed.RawQuery = query.Encode()
-	return parsed.String()
 }
 
 func validateIssuePayload(payload commands.VDIIssueAccessV1Payload) error {

@@ -104,6 +104,12 @@ func TestServiceOpensActiveSession(t *testing.T) {
 		ExpiresAt: testNow.Add(time.Minute),
 		IssuedAt:  testNow,
 	}
+	repo.instances["server-1"] = InstanceTarget{
+		ServerID: "server-1",
+		Name:     "L-MS",
+		State:    "ACTIVE",
+	}
+	repo.defaultServerID = "server-1"
 	service := newTestService(t, repo, fixedTokenGenerator{token: "unused"}, fixedClock{now: testNow})
 
 	launch, err := service.OpenSession(context.Background(), OpenSessionRequest{
@@ -114,7 +120,7 @@ func TestServiceOpensActiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	if launch.LaunchURL != "/novnc?session=opaque-token" {
+	if launch.LaunchURL != "https://novnc.example/console/server-1" {
 		t.Fatalf("LaunchURL = %q", launch.LaunchURL)
 	}
 	if repo.openedTokenHash != hash || repo.openedRemoteAddr != "127.0.0.1" {
@@ -151,7 +157,7 @@ func TestServiceOpensTargetedInstanceSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	if launch.LaunchURL != "/novnc?instance_name=L-MS&server_id=server-1&session=opaque-token" {
+	if launch.LaunchURL != "https://novnc.example/console/server-1" {
 		t.Fatalf("LaunchURL = %q", launch.LaunchURL)
 	}
 	if launch.ServerID != "server-1" || launch.InstanceName != "L-MS" {
@@ -215,6 +221,7 @@ type fakeRepository struct {
 	issued           AccessToken
 	tokens           map[string]AccessToken
 	instances        map[string]InstanceTarget
+	defaultServerID  string
 	event            contracts.Envelope
 	failureReason    string
 	revokedLabRunID  string
@@ -261,6 +268,19 @@ func (r *fakeRepository) FindInstanceTarget(_ context.Context, _ string, serverI
 	return target, ok, nil
 }
 
+func (r *fakeRepository) FindDefaultInstanceTarget(_ context.Context, _ string) (InstanceTarget, bool, error) {
+	if r.defaultServerID != "" {
+		target, ok := r.instances[r.defaultServerID]
+		return target, ok, nil
+	}
+	for _, target := range r.instances {
+		if target.State == "ACTIVE" && target.ServerID != "" {
+			return target, true, nil
+		}
+	}
+	return InstanceTarget{}, false, nil
+}
+
 func (r *fakeRepository) MarkExpired(_ context.Context, tokenHash string) error {
 	r.expiredTokenHash = tokenHash
 	return nil
@@ -289,13 +309,21 @@ func (c fixedClock) Now() time.Time {
 	return c.now
 }
 
+type fakeConsoleProvider struct{}
+
+func (fakeConsoleProvider) ConsoleURL(_ context.Context, serverID string) (string, error) {
+	if serverID == "" {
+		return "", errors.New("server_id is required")
+	}
+	return "https://novnc.example/console/" + serverID, nil
+}
+
 func newTestService(t *testing.T, repo Repository, generator TokenGenerator, clk clock) *Service {
 	t.Helper()
 	service, err := NewServiceWithDeps("vdi-gateway-service", repo, config.VDIConfig{
-		PublicBaseURL:      "https://vdi.example",
-		AccessTokenTTL:     10 * time.Minute,
-		ConsoleURLTemplate: "/novnc?session={token}",
-	}, generator, clk)
+		PublicBaseURL:  "https://vdi.example",
+		AccessTokenTTL: 10 * time.Minute,
+	}, fakeConsoleProvider{}, generator, clk)
 	if err != nil {
 		t.Fatalf("NewServiceWithDeps: %v", err)
 	}

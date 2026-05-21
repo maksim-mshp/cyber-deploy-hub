@@ -96,10 +96,9 @@ type CloudConfig struct {
 }
 
 type VDIConfig struct {
-	HTTPAddr           string        `env:"VDI_HTTP_ADDR" envDefault:":8082"`
-	PublicBaseURL      string        `env:"VDI_PUBLIC_BASE_URL" envDefault:"http://localhost:8082"`
-	AccessTokenTTL     time.Duration `env:"VDI_ACCESS_TOKEN_TTL" envDefault:"15m"`
-	ConsoleURLTemplate string        `env:"VDI_CONSOLE_URL_TEMPLATE" envDefault:"/vdi/console?session={token}"`
+	HTTPAddr       string        `env:"VDI_HTTP_ADDR" envDefault:":8082"`
+	PublicBaseURL  string        `env:"VDI_PUBLIC_BASE_URL" envDefault:"http://localhost:8082"`
+	AccessTokenTTL time.Duration `env:"VDI_ACCESS_TOKEN_TTL" envDefault:"15m"`
 }
 
 type LifecycleConfig struct {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/config"
 	"cyber-deploy-hub/internal/contracts/events"
 	"cyber-deploy-hub/internal/inbox"
@@ -55,7 +56,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	service, err := vdigatewayusecase.NewService(serviceName, repo, cfg.VDI)
+	openStackClient := openstack.NewClient(cfg.OpenStack)
+	service, err := vdigatewayusecase.NewService(serviceName, repo, cfg.VDI, openstack.NewConsoleProvider(openStackClient))
 	if err != nil {
 		return err
 	}

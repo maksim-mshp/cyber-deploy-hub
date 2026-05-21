@@ -151,6 +151,27 @@ WHERE lab_run_id = $1 AND server_id = $2`,
 	return target, true, nil
 }
 
+func (r *PostgresRepository) FindDefaultInstanceTarget(ctx context.Context, labRunID string) (InstanceTarget, bool, error) {
+	var target InstanceTarget
+	err := r.db.QueryRow(ctx, `
+SELECT COALESCE(server_id, ''),
+       name,
+       state
+FROM cloud_adapter.instances
+WHERE lab_run_id = $1
+  AND state = 'ACTIVE'
+  AND COALESCE(server_id, '') <> ''
+ORDER BY id
+LIMIT 1`, labRunID).Scan(&target.ServerID, &target.Name, &target.State)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InstanceTarget{}, false, nil
+	}
+	if err != nil {
+		return InstanceTarget{}, false, err
+	}
+	return target, true, nil
+}
+
 func (r *PostgresRepository) MarkExpired(ctx context.Context, tokenHash string) error {
 	_, err := r.db.Exec(ctx, `
 UPDATE vdi_gateway.access_tokens

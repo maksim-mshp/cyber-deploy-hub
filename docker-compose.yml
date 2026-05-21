@@ -266,10 +266,20 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
       DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
       NATS_URL: ${NATS_URL:-nats://nats:4222}
+      OS_AUTH_URL: ${OS_AUTH_URL:-https://edu.cyber-infrastructure.ru:5000/v3}
+      OS_USERNAME: ${OS_USERNAME:-}
+      OS_PASSWORD: ${OS_PASSWORD:-}
+      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME:-Hackhaton}
+      OS_PROJECT_ID: ${OS_PROJECT_ID:-}
+      OS_PROJECT_NAME: ${OS_PROJECT_NAME:-}
+      OS_PROJECT_DOMAIN_NAME: ${OS_PROJECT_DOMAIN_NAME:-Hackhaton}
+      OS_REGION_NAME: ${OS_REGION_NAME:-}
+      OS_ALLOW_REAUTH: ${OS_ALLOW_REAUTH:-true}
+      OS_INSECURE: ${OS_INSECURE:-false}
+      OS_TIMEOUT: ${OS_TIMEOUT:-20s}
       VDI_HTTP_ADDR: ":8082"
       VDI_PUBLIC_BASE_URL: ${VDI_PUBLIC_BASE_URL:-http://localhost:8082}
       VDI_ACCESS_TOKEN_TTL: ${VDI_ACCESS_TOKEN_TTL:-15m}
-      VDI_CONSOLE_URL_TEMPLATE: ${VDI_CONSOLE_URL_TEMPLATE:-/vdi/console?session={token}}
     ports:
       - "${VDI_GATEWAY_PORT:-8082}:8082"
     depends_on:
