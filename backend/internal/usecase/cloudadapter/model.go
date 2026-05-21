@@ -1,11 +1,6 @@
 package cloudadapter
 
-import (
-	"encoding/json"
-	"time"
-
-	"cyber-deploy-hub/internal/contracts/commands"
-)
+import "cyber-deploy-hub/internal/contracts/commands"
 
 const (
 	deploymentStateDeployed = "DEPLOYED"
@@ -71,22 +66,4 @@ type EncryptedSecret struct {
 	Ciphertext []byte
 	Nonce      []byte
 	KeyID      string
-}
-
-type clock interface {
-	Now() time.Time
-}
-
-type systemClock struct{}
-
-func (systemClock) Now() time.Time {
-	return time.Now().UTC()
-}
-
-func rawJSON(value any) json.RawMessage {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return json.RawMessage(`{}`)
-	}
-	return raw
 }

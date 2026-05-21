@@ -115,6 +115,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof core-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   project-pool-service:
@@ -137,6 +142,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof project-pool-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   capacity-service:
@@ -184,6 +194,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof capacity-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   cloud-adapter-service:
@@ -225,6 +240,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof cloud-adapter-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   vdi-gateway-service:
@@ -281,6 +301,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof lifecycle-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   checker-service:
@@ -309,6 +334,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pidof checker-service >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   lms-gateway-service:

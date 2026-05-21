@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -144,13 +145,13 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 
 	if err := c.handler(ctx, envelope); err != nil {
 		_ = c.inbox.MarkFailed(ctx, envelope.MessageID, err)
-		delivery := deliveryAttempt(msg)
-		if delivery >= uint64(c.opts.MaxDeliver) {
+		delivery := deliveryAttemptInt(msg)
+		if delivery >= c.opts.MaxDeliver {
 			c.publishDLQ(ctx, envelope, err)
 			c.ack(msg, envelope)
 			return
 		}
-		c.nak(msg, int(delivery), err, envelope)
+		c.nak(msg, delivery, err, envelope)
 		return
 	}
 
@@ -246,7 +247,11 @@ func deliveryAttempt(msg *nats.Msg) uint64 {
 }
 
 func deliveryAttemptInt(msg *nats.Msg) int {
-	return int(deliveryAttempt(msg))
+	attempt := deliveryAttempt(msg)
+	if attempt > uint64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(attempt)
 }
 
 func backoffDelay(attempt int, initial time.Duration, max time.Duration) time.Duration {

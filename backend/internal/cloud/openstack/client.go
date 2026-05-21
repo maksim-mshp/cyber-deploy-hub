@@ -158,7 +158,7 @@ func (c *Client) timeout() time.Duration {
 func (c *Client) transport() http.RoundTripper {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if c.cfg.InsecureSkipVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- enabled only by explicit OS_INSECURE for isolated lab stands.
 	}
 	return transport
 }

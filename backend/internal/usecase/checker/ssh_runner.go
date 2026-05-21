@@ -46,7 +46,9 @@ func (r *SSHRunner) Run(ctx context.Context, profile Profile, target RemoteTarge
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
+	defer func() {
+		_ = client.Close()
+	}()
 
 	results := make([]StepResult, 0, len(profile.Steps))
 	for _, step := range profile.Steps {
@@ -95,7 +97,7 @@ func (r *SSHRunner) dial(ctx context.Context, target RemoteTarget, signer ssh.Si
 	config := &ssh.ClientConfig{
 		User:            target.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // #nosec G106 -- lab VMs are ephemeral and do not have pre-registered host keys.
 		Timeout:         r.dialTimeout,
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, address, config)
@@ -111,7 +113,9 @@ func runSSHCommand(ctx context.Context, client *ssh.Client, command string, time
 	if err != nil {
 		return RemoteCommandResult{}, err
 	}
-	defer session.Close()
+	defer func() {
+		_ = session.Close()
+	}()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

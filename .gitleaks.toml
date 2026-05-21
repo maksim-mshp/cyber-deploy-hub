@@ -1,0 +1,17 @@
+title = "cyber-deploy-hub gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore placeholders and local generated data"
+paths = [
+  '''^\.codex/''',
+  '''^\.info/''',
+  '''^frontend/package-lock\.json$'''
+]
+regexes = [
+  '''change-me''',
+  '''example''',
+  '''localhost'''
+]

@@ -1,9 +1,6 @@
 package checker
 
-import (
-	"encoding/json"
-	"time"
-)
+import "time"
 
 const (
 	runStatePassed = "PASSED"
@@ -90,12 +87,4 @@ type RunRecord struct {
 	StartedAt    time.Time
 	FinishedAt   time.Time
 	Results      []StepResult
-}
-
-func rawJSON(value any) json.RawMessage {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return json.RawMessage(`{}`)
-	}
-	return raw
 }
