@@ -27,6 +27,7 @@ type ConsumerOptions struct {
 	Queue          string
 	Durable        string
 	MaxDeliver     int
+	MaxAckPending  int
 	AckWait        time.Duration
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
@@ -100,6 +101,9 @@ func (c *Consumer) Start() error {
 		nats.AckWait(c.opts.AckWait),
 		nats.MaxDeliver(c.opts.MaxDeliver),
 	}
+	if c.opts.MaxAckPending > 0 {
+		subscribeOpts = append(subscribeOpts, nats.MaxAckPending(c.opts.MaxAckPending))
+	}
 
 	var err error
 	if c.opts.Queue != "" {
@@ -143,7 +147,10 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		return
 	}
 
-	if err := c.handler(ctx, envelope); err != nil {
+	stopAckProgress := c.startAckProgress(msg, envelope)
+	err = c.handler(ctx, envelope)
+	stopAckProgress()
+	if err != nil {
 		_ = c.inbox.MarkFailed(ctx, envelope.MessageID, err)
 		delivery := deliveryAttemptInt(msg)
 		if delivery >= c.opts.MaxDeliver {
@@ -160,6 +167,35 @@ func (c *Consumer) handleMessage(msg *nats.Msg) {
 		return
 	}
 	c.ack(msg, envelope)
+}
+
+func (c *Consumer) startAckProgress(msg *nats.Msg, envelope contracts.Envelope) func() {
+	interval := ackProgressInterval(c.opts.AckWait)
+	if interval <= 0 {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := msg.InProgress(); err != nil && c.logger != nil {
+					attrs := append(contracts.LogAttrs(envelope), slog.Any("error", err))
+					c.logger.LogAttrs(context.Background(), slog.LevelWarn, "failed to send nats ack progress", attrs...)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 func (c *Consumer) ackInvalidMessage(msg *nats.Msg, err error) {
@@ -266,6 +302,20 @@ func backoffDelay(attempt int, initial time.Duration, max time.Duration) time.Du
 		}
 	}
 	return delay
+}
+
+func ackProgressInterval(ackWait time.Duration) time.Duration {
+	if ackWait <= 0 {
+		return 0
+	}
+	interval := ackWait / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
+	if interval > 30*time.Second {
+		interval = 30 * time.Second
+	}
+	return interval
 }
 
 func truncateError(err error) string {

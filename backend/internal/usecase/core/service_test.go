@@ -42,7 +42,12 @@ func TestServiceStartsProvisioningSaga(t *testing.T) {
 }
 
 func TestServiceAdvancesAfterProjectAllocated(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:    "lab-1",
+			State: domain.LabRunAllocatingProject,
+		},
+	}
 	service := NewService("core-service", repo)
 	envelope := testEnvelope(t, contracts.MessageKindEvent, events.ProjectAllocatedV1, events.ProjectAllocatedV1Payload{
 		LabRunID:  "lab-1",
@@ -169,7 +174,12 @@ func TestServiceFailsAndReleasesProjectWhenCapacityDenied(t *testing.T) {
 }
 
 func TestServiceSchedulesCleanupWhenVDIAccessIssued(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:    "lab-1",
+			State: domain.LabRunIssuingVDIAccess,
+		},
+	}
 	service := NewService("core-service", repo)
 	envelope := testEnvelope(t, contracts.MessageKindEvent, events.VDIAccessIssuedV1, events.VDIAccessIssuedV1Payload{
 		LabRunID:  "lab-1",
@@ -222,6 +232,47 @@ func TestServiceCleansCloudAfterDeployFailure(t *testing.T) {
 	}
 }
 
+func TestServiceIgnoresDeploySuccessAfterCleanupStarted(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunDeploying,
+		},
+	}
+	service := NewService("core-service", repo)
+	cleanup := testEnvelope(t, contracts.MessageKindCommand, commands.RequestCleanupV1, commands.LabRunCommandPayload{
+		LabRunID: "lab-1",
+		Reason:   "teacher_cleanup",
+	})
+
+	if err := service.Handle(context.Background(), cleanup); err != nil {
+		t.Fatalf("cleanup Handle: %v", err)
+	}
+	transition := repo.lastTransition(t)
+	if transition.State != domain.LabRunCleaning {
+		t.Fatalf("cleanup state = %q", transition.State)
+	}
+
+	deployed := testEnvelope(t, contracts.MessageKindEvent, events.CloudVDIDeployedV1, events.CloudVDIDeployedV1Payload{
+		LabRunID:  "lab-1",
+		ProjectID: "project-1",
+		Instances: []events.DeployedInstance{{
+			Name:     "vm-1",
+			ServerID: "server-1",
+		}},
+	})
+	if err := service.Handle(context.Background(), deployed); err != nil {
+		t.Fatalf("deploy success Handle: %v", err)
+	}
+	if len(repo.transitions) != 1 {
+		t.Fatalf("late deploy success must be ignored, transitions = %#v", repo.transitions)
+	}
+	if repo.labRun.State != domain.LabRunCleaning {
+		t.Fatalf("state after late deploy success = %q", repo.labRun.State)
+	}
+}
+
 type fakeRepository struct {
 	startedReq     commands.RequestProvisionV1Payload
 	startedCommand contracts.Envelope
@@ -239,7 +290,15 @@ func (r *fakeRepository) StartProvisioning(_ context.Context, req commands.Reque
 }
 
 func (r *fakeRepository) Advance(_ context.Context, transition Transition) error {
+	if len(transition.ExpectedStates) > 0 && !stateAllowed(r.currentState(), transition.ExpectedStates) {
+		return nil
+	}
 	r.transitions = append(r.transitions, transition)
+	r.labRun.ID = transition.LabRunID
+	r.labRun.State = transition.State
+	if transition.ProjectID != "" {
+		r.labRun.ProjectID = transition.ProjectID
+	}
 	return nil
 }
 
@@ -260,6 +319,22 @@ func (r *fakeRepository) LoadLabRun(_ context.Context, labRunID string) (LabRun,
 		}, nil
 	}
 	return r.labRun, nil
+}
+
+func (r *fakeRepository) currentState() domain.LabRunState {
+	if r.labRun.State == "" {
+		return domain.LabRunDeploying
+	}
+	return r.labRun.State
+}
+
+func stateAllowed(current domain.LabRunState, expected []domain.LabRunState) bool {
+	for _, state := range expected {
+		if current == state {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *fakeRepository) lastTransition(t *testing.T) Transition {

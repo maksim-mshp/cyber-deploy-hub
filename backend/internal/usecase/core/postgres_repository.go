@@ -92,6 +92,15 @@ WHERE id = $1`,
 
 func (r *PostgresRepository) Advance(ctx context.Context, transition Transition) error {
 	return r.tx(ctx, func(tx pgx.Tx) error {
+		if len(transition.ExpectedStates) > 0 {
+			allowed, err := lockAndCheckState(ctx, tx, transition.LabRunID, transition.ExpectedStates)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return nil
+			}
+		}
 		tag, err := tx.Exec(ctx, `
 UPDATE core.lab_runs
 SET state = $2,
@@ -133,6 +142,22 @@ WHERE id = $1`,
 		}
 		return nil
 	})
+}
+
+func lockAndCheckState(ctx context.Context, tx pgx.Tx, labRunID string, expected []domain.LabRunState) (bool, error) {
+	var state string
+	if err := tx.QueryRow(ctx, `SELECT state FROM core.lab_runs WHERE id = $1 FOR UPDATE`, labRunID).Scan(&state); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("lab_run %s not found", labRunID)
+		}
+		return false, err
+	}
+	for _, item := range expected {
+		if state == string(item) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *PostgresRepository) Fail(ctx context.Context, failure Failure) error {

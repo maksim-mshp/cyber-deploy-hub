@@ -35,3 +35,17 @@ func TestConsumerBackoffDelayCapsAtMax(t *testing.T) {
 		t.Fatalf("backoffDelay = %v, want 5s", got)
 	}
 }
+
+func TestAckProgressIntervalCapsAtThirtySeconds(t *testing.T) {
+	got := ackProgressInterval(31 * time.Minute)
+	if got != 30*time.Second {
+		t.Fatalf("ackProgressInterval = %v, want 30s", got)
+	}
+}
+
+func TestAckProgressIntervalKeepsMinimumSecond(t *testing.T) {
+	got := ackProgressInterval(1500 * time.Millisecond)
+	if got != time.Second {
+		t.Fatalf("ackProgressInterval = %v, want 1s", got)
+	}
+}

@@ -89,11 +89,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	go dispatcher.Run(dispatcherCtx)
 
 	consumer, err := natsbus.NewConsumer(ctx, cfg.NATS.URL, serviceName+"-commands", natsbus.ConsumerOptions{
-		Stream:  "COMMANDS",
-		Subject: "cmd.cloud.>",
-		Queue:   serviceName,
-		Durable: "cloud_adapter_commands",
-		AckWait: cfg.Cloud.DeployTimeout + time.Minute,
+		Stream:        "COMMANDS",
+		Subject:       "cmd.cloud.>",
+		Queue:         serviceName,
+		Durable:       "cloud_adapter_commands",
+		AckWait:       2 * time.Minute,
+		MaxAckPending: 1,
 	}, inboxStore, service.Handle, logger)
 	if err != nil {
 		return err

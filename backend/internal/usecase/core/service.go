@@ -25,13 +25,14 @@ type Repository interface {
 }
 
 type Transition struct {
-	LabRunID  string
-	ProjectID string
-	VDIURL    string
-	State     domain.LabRunState
-	StepName  string
-	Message   contracts.Envelope
-	Next      []contracts.Envelope
+	LabRunID       string
+	ProjectID      string
+	VDIURL         string
+	State          domain.LabRunState
+	StepName       string
+	Message        contracts.Envelope
+	ExpectedStates []domain.LabRunState
+	Next           []contracts.Envelope
 }
 
 type Failure struct {
@@ -149,12 +150,13 @@ func (s *Service) handleProjectAllocated(ctx context.Context, envelope contracts
 	}
 
 	return s.repo.Advance(ctx, Transition{
-		LabRunID:  payload.LabRunID,
-		ProjectID: payload.ProjectID,
-		State:     domain.LabRunCheckingCapacity,
-		StepName:  "project_allocated",
-		Message:   envelope,
-		Next:      []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		ProjectID:      payload.ProjectID,
+		State:          domain.LabRunCheckingCapacity,
+		StepName:       "project_allocated",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunAllocatingProject},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -174,11 +176,12 @@ func (s *Service) handleRequestFreeze(ctx context.Context, envelope contracts.En
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    domain.LabRunFrozen,
-		StepName: "request_freeze",
-		Message:  envelope,
-		Next:     []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		State:          domain.LabRunFrozen,
+		StepName:       "request_freeze",
+		Message:        envelope,
+		ExpectedStates: activeLabStates(),
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -221,11 +224,12 @@ func (s *Service) handleRequestCleanup(ctx context.Context, envelope contracts.E
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    domain.LabRunCleaning,
-		StepName: "request_cleanup",
-		Message:  envelope,
-		Next:     []contracts.Envelope{revoke, cleanup, cancelTimer},
+		LabRunID:       payload.LabRunID,
+		State:          domain.LabRunCleaning,
+		StepName:       "request_cleanup",
+		Message:        envelope,
+		ExpectedStates: cleanupAllowedStates(),
+		Next:           []contracts.Envelope{revoke, cleanup, cancelTimer},
 	})
 }
 
@@ -249,11 +253,12 @@ func (s *Service) handleRequestVerification(ctx context.Context, envelope contra
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    domain.LabRunVerifying,
-		StepName: "request_verification",
-		Message:  envelope,
-		Next:     []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		State:          domain.LabRunVerifying,
+		StepName:       "request_verification",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunReady, domain.LabRunVerified, domain.LabRunVerificationFailed},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -277,12 +282,13 @@ func (s *Service) handleCapacityApproved(ctx context.Context, envelope contracts
 	}
 
 	return s.repo.Advance(ctx, Transition{
-		LabRunID:  payload.LabRunID,
-		ProjectID: payload.ProjectID,
-		State:     domain.LabRunDeploying,
-		StepName:  "capacity_approved",
-		Message:   envelope,
-		Next:      []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		ProjectID:      payload.ProjectID,
+		State:          domain.LabRunDeploying,
+		StepName:       "capacity_approved",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunCheckingCapacity},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -346,12 +352,13 @@ func (s *Service) handleCloudVDIDeployed(ctx context.Context, envelope contracts
 	}
 
 	return s.repo.Advance(ctx, Transition{
-		LabRunID:  payload.LabRunID,
-		ProjectID: payload.ProjectID,
-		State:     domain.LabRunIssuingVDIAccess,
-		StepName:  "cloud_vdi_deployed",
-		Message:   envelope,
-		Next:      []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		ProjectID:      payload.ProjectID,
+		State:          domain.LabRunIssuingVDIAccess,
+		StepName:       "cloud_vdi_deployed",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunDeploying},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -378,12 +385,13 @@ func (s *Service) handleVDIAccessIssued(ctx context.Context, envelope contracts.
 	}
 
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		VDIURL:   payload.URL,
-		State:    domain.LabRunReady,
-		StepName: "vdi_access_issued",
-		Message:  envelope,
-		Next:     []contracts.Envelope{schedule, ready},
+		LabRunID:       payload.LabRunID,
+		VDIURL:         payload.URL,
+		State:          domain.LabRunReady,
+		StepName:       "vdi_access_issued",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunIssuingVDIAccess},
+		Next:           []contracts.Envelope{schedule, ready},
 	})
 }
 
@@ -414,11 +422,12 @@ func (s *Service) handleCleanupDue(ctx context.Context, envelope contracts.Envel
 	}
 
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    domain.LabRunCleaning,
-		StepName: "cleanup_due",
-		Message:  envelope,
-		Next:     []contracts.Envelope{revoke, cleanup},
+		LabRunID:       payload.LabRunID,
+		State:          domain.LabRunCleaning,
+		StepName:       "cleanup_due",
+		Message:        envelope,
+		ExpectedStates: cleanupAllowedStates(),
+		Next:           []contracts.Envelope{revoke, cleanup},
 	})
 }
 
@@ -444,11 +453,12 @@ func (s *Service) handleCloudLabCleaned(ctx context.Context, envelope contracts.
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    state,
-		StepName: "cloud_lab_cleaned",
-		Message:  envelope,
-		Next:     []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		State:          state,
+		StepName:       "cloud_lab_cleaned",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunCleaning, domain.LabRunFailed},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -463,10 +473,11 @@ func (s *Service) handleProjectReleased(ctx context.Context, envelope contracts.
 	}
 	if labRun.State == domain.LabRunFailed {
 		return s.repo.Advance(ctx, Transition{
-			LabRunID: labRunID,
-			State:    domain.LabRunFailed,
-			StepName: "project_released",
-			Message:  envelope,
+			LabRunID:       labRunID,
+			State:          domain.LabRunFailed,
+			StepName:       "project_released",
+			Message:        envelope,
+			ExpectedStates: []domain.LabRunState{domain.LabRunFailed},
 		})
 	}
 
@@ -478,11 +489,12 @@ func (s *Service) handleProjectReleased(ctx context.Context, envelope contracts.
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: labRunID,
-		State:    domain.LabRunFinished,
-		StepName: "project_released",
-		Message:  envelope,
-		Next:     []contracts.Envelope{finished},
+		LabRunID:       labRunID,
+		State:          domain.LabRunFinished,
+		StepName:       "project_released",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunCleaning},
+		Next:           []contracts.Envelope{finished},
 	})
 }
 
@@ -505,11 +517,12 @@ func (s *Service) handleCheckerCompleted(ctx context.Context, envelope contracts
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: payload.LabRunID,
-		State:    state,
-		StepName: "checker_completed",
-		Message:  envelope,
-		Next:     []contracts.Envelope{next},
+		LabRunID:       payload.LabRunID,
+		State:          state,
+		StepName:       "checker_completed",
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunVerifying},
+		Next:           []contracts.Envelope{next},
 	})
 }
 
@@ -587,11 +600,37 @@ func (s *Service) record(ctx context.Context, envelope contracts.Envelope, state
 		return err
 	}
 	return s.repo.Advance(ctx, Transition{
-		LabRunID: labRunID,
-		State:    state,
-		StepName: stepName,
-		Message:  envelope,
+		LabRunID:       labRunID,
+		State:          state,
+		StepName:       stepName,
+		Message:        envelope,
+		ExpectedStates: []domain.LabRunState{state},
 	})
+}
+
+func activeLabStates() []domain.LabRunState {
+	return []domain.LabRunState{
+		domain.LabRunReady,
+		domain.LabRunVerifying,
+		domain.LabRunVerified,
+		domain.LabRunVerificationFailed,
+		domain.LabRunFrozen,
+	}
+}
+
+func cleanupAllowedStates() []domain.LabRunState {
+	return []domain.LabRunState{
+		domain.LabRunRequested,
+		domain.LabRunAllocatingProject,
+		domain.LabRunCheckingCapacity,
+		domain.LabRunDeploying,
+		domain.LabRunIssuingVDIAccess,
+		domain.LabRunReady,
+		domain.LabRunVerifying,
+		domain.LabRunVerified,
+		domain.LabRunVerificationFailed,
+		domain.LabRunFrozen,
+	}
 }
 
 func (s *Service) newCommand(cause contracts.Envelope, subject contracts.Subject, payload any) (contracts.Envelope, error) {
