@@ -347,7 +347,7 @@ function TeacherDashboard({ user }) {
   const [busy, setBusy] = useState(false)
 
   const activeRuns = useMemo(() => runs.filter((run) => activeStates.has(run.state)), [runs])
-  const selectedRun = runs.find((run) => run.id === selectedRunID) || activeRuns[0] || runs[0] || null
+  const selectedRun = activeRuns.find((run) => run.id === selectedRunID) || activeRuns[0] || null
   const selectedDefinition = definitions.find((lab) => labKey(lab) === selectedLabKey) || definitions[0] || null
   const selectedRunInstanceID = selectedRun?.id || ''
   const instances = instanceState.runID === selectedRunInstanceID ? instanceState.items : []
@@ -362,7 +362,13 @@ function TeacherDashboard({ user }) {
       }
       return snapshot.definitions[0] ? cloneDefinition(snapshot.definitions[0]) : current
     })
-    setSelectedRunID((current) => current || snapshot.runs[0]?.id || '')
+    setSelectedRunID((current) => {
+      const stillActive = snapshot.runs.some((run) => run.id === current && activeStates.has(run.state))
+      if (stillActive) {
+        return current
+      }
+      return snapshot.runs.find((run) => activeStates.has(run.state))?.id || ''
+    })
   }, [])
 
   const refresh = useCallback(async () => {
@@ -526,7 +532,7 @@ function TeacherDashboard({ user }) {
             <h2>Активные стенды</h2>
           </div>
           <div className="run-list">
-            {runs.map((run) => (
+            {activeRuns.map((run) => (
               <button
                 key={run.id}
                 className={selectedRun?.id === run.id ? 'run-item selected' : 'run-item'}
@@ -538,7 +544,7 @@ function TeacherDashboard({ user }) {
                 <StateBadge state={run.state} />
               </button>
             ))}
-            {runs.length === 0 ? <p className="empty">Стендов нет</p> : null}
+            {activeRuns.length === 0 ? <p className="empty">Активных стендов нет</p> : null}
           </div>
         </section>
 
