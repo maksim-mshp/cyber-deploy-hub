@@ -2,7 +2,9 @@ package cloudadapter
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,12 +63,21 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := encryptor.Ready(); err != nil {
+		return err
+	}
 
 	openStackClient := openstack.NewClient(cfg.OpenStack)
-	var provider cloudadapterusecase.CloudProvider = cloudadapterusecase.UnavailableProvider{Reason: "openstack credentials are not configured"}
-	if openStackClient.Configured() {
-		provider = cloudadapterusecase.NewOpenStackProvider(openStackClient, cfg.Cloud)
+	if !openStackClient.Configured() {
+		return errors.New("real OpenStack provider is not configured")
 	}
+	if strings.TrimSpace(cfg.Cloud.PrivateNetworkID) == "" {
+		return errors.New("CLOUD_PRIVATE_NETWORK_ID is required")
+	}
+	if strings.TrimSpace(cfg.Cloud.PrivateSubnetID) == "" {
+		return errors.New("CLOUD_PRIVATE_SUBNET_ID is required")
+	}
+	provider := cloudadapterusecase.NewOpenStackProvider(openStackClient, cfg.Cloud)
 	service, err := cloudadapterusecase.NewService(serviceName, provider, repo, encryptor, blueprints)
 	if err != nil {
 		return err

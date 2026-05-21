@@ -44,8 +44,11 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.Capacity.ThresholdPercent != 90 {
 		t.Fatalf("Capacity.ThresholdPercent = %v, want 90", cfg.Capacity.ThresholdPercent)
 	}
-	if cfg.Capacity.DemoVCPUs != 128 {
-		t.Fatalf("Capacity.DemoVCPUs = %d, want 128", cfg.Capacity.DemoVCPUs)
+	if !cfg.ProjectPool.AutoImportOpenStackProject {
+		t.Fatal("ProjectPool.AutoImportOpenStackProject must default to true")
+	}
+	if cfg.ProjectPool.DefaultCourseID != "course-3" {
+		t.Fatalf("ProjectPool.DefaultCourseID = %q, want course-3", cfg.ProjectPool.DefaultCourseID)
 	}
 	if cfg.Cloud.DeployTimeout != 20*time.Minute {
 		t.Fatalf("Cloud.DeployTimeout = %v, want 20m", cfg.Cloud.DeployTimeout)

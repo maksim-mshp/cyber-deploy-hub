@@ -20,6 +20,49 @@ func NewPostgresReader(db *pgxpool.Pool) (*PostgresReader, error) {
 	return &PostgresReader{db: db}, nil
 }
 
+func (r *PostgresReader) ListLabRuns(ctx context.Context, limit int) (LabRunsView, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id::text,
+       student_id,
+       course_id,
+       lab_id,
+       state,
+       COALESCE(failure_code, ''),
+       COALESCE(failure_message, ''),
+       created_at,
+       updated_at
+FROM core.lab_runs
+ORDER BY updated_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return LabRunsView{}, err
+	}
+	defer rows.Close()
+
+	view := LabRunsView{Labs: []LabRunView{}}
+	for rows.Next() {
+		var item LabRunView
+		if err := rows.Scan(
+			&item.ID,
+			&item.StudentID,
+			&item.CourseID,
+			&item.LabID,
+			&item.State,
+			&item.FailureCode,
+			&item.FailureMessage,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return LabRunsView{}, err
+		}
+		view.Labs = append(view.Labs, item)
+	}
+	return view, rows.Err()
+}
+
 func (r *PostgresReader) GetLabRun(ctx context.Context, labRunID string) (LabRunView, bool, error) {
 	var view LabRunView
 	err := r.db.QueryRow(ctx, `
@@ -103,9 +146,24 @@ LIMIT $3`, labRunID, afterID, limit)
 		return nil, err
 	}
 	for i := range events {
-		events[i].Payload = nil
+		events[i].Payload = publicEventPayload(events[i].MessageType, events[i].Payload)
 	}
 	return events, nil
+}
+
+func publicEventPayload(messageType string, payload json.RawMessage) json.RawMessage {
+	switch messageType {
+	case "evt.capacity.approved.v1", "evt.capacity.denied.v1":
+		var envelope struct {
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err == nil && len(envelope.Payload) > 0 {
+			return envelope.Payload
+		}
+		return payload
+	default:
+		return nil
+	}
 }
 
 func (r *PostgresReader) ListAuditEvents(ctx context.Context, limit int) (AuditView, error) {

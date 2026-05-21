@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"cyber-deploy-hub/internal/config"
 )
 
@@ -43,6 +45,21 @@ type ClusterStat struct {
 		InProgress int `json:"in_progress"`
 		Stopped    int `json:"stopped"`
 	} `json:"servers"`
+}
+
+type ProjectQuota struct {
+	Compute struct {
+		Cores QuotaUsage `json:"cores"`
+		RAM   QuotaUsage `json:"ram"`
+	} `json:"compute"`
+	Storage struct {
+		StoragePolicies map[string]QuotaUsage `json:"storage_policies"`
+	} `json:"storage"`
+}
+
+type QuotaUsage struct {
+	Limit int64 `json:"limit"`
+	Used  int64 `json:"used"`
 }
 
 func NewClient(cfg config.KIConfig) *Client {
@@ -99,8 +116,66 @@ func (c *Client) ClusterStat(ctx context.Context) (*ClusterStat, error) {
 	return &stat, nil
 }
 
+func (c *Client) ProjectQuota(ctx context.Context, projectID string) (*ProjectQuota, error) {
+	if !c.Configured() {
+		return nil, errors.New("ki api client is not configured")
+	}
+	projectID = normalizeProjectID(firstNonEmpty(projectID, c.cfg.ProjectID))
+	if projectID == "" {
+		return nil, errors.New("ki project id is required")
+	}
+	if err := c.ensureProjectSession(ctx, false); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.projectQuota(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && c.canLogin() {
+		_ = resp.Body.Close()
+		c.resetSession()
+		if err := c.ensureProjectSession(ctx, true); err != nil {
+			return nil, err
+		}
+		resp, err = c.projectQuota(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ki api returned status %d", resp.StatusCode)
+	}
+
+	var quota ProjectQuota
+	if err := json.NewDecoder(resp.Body).Decode(&quota); err != nil {
+		return nil, err
+	}
+	return &quota, nil
+}
+
 func (c *Client) clusterStat(ctx context.Context) (*http.Response, error) {
 	url := c.apiURL("/api/v2/compute/cluster/stat")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setCommonHeaders(req)
+	if token := c.projectToken(); token != "" {
+		req.Header.Set("x-auth-token", token)
+	}
+	if cookie := strings.TrimSpace(c.cfg.SessionCookie); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	return c.httpClient.Do(req)
+}
+
+func (c *Client) projectQuota(ctx context.Context, projectID string) (*http.Response, error) {
+	url := c.apiURL(fmt.Sprintf("/api/v2/compute/quotas/%s/?usage=True", projectID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -145,7 +220,7 @@ func (c *Client) login(ctx context.Context) error {
 }
 
 func (c *Client) authenticateProject(ctx context.Context) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/v2/accounts/projects/%s/auth/", c.cfg.ProjectID), map[string]any{})
+	return c.postJSON(ctx, fmt.Sprintf("/api/v2/accounts/projects/%s/auth/", normalizeProjectID(c.cfg.ProjectID)), map[string]any{})
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload any) error {
@@ -185,7 +260,7 @@ func (c *Client) apiURL(path string) string {
 }
 
 func (c *Client) projectToken() string {
-	projectID := strings.TrimSpace(c.cfg.ProjectID)
+	projectID := normalizeProjectID(c.cfg.ProjectID)
 	if projectID != "" && (strings.TrimSpace(c.cfg.SessionCookie) != "" || c.canLogin()) {
 		return projectID
 	}
@@ -206,4 +281,21 @@ func (c *Client) resetSession() {
 	c.sessionMutex.Lock()
 	defer c.sessionMutex.Unlock()
 	c.sessionReady = false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func normalizeProjectID(projectID string) string {
+	trimmed := strings.TrimSpace(projectID)
+	if _, err := uuid.Parse(trimmed); err != nil {
+		return trimmed
+	}
+	return strings.ReplaceAll(trimmed, "-", "")
 }

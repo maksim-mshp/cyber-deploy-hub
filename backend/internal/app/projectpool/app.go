@@ -3,10 +3,12 @@ package projectpool
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/config"
 	"cyber-deploy-hub/internal/inbox"
 	"cyber-deploy-hub/internal/outbox"
@@ -57,6 +59,12 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if seed.Empty() && cfg.ProjectPool.AutoImportOpenStackProject {
+		seed, err = openStackProjectSeed(ctx, cfg)
+		if err != nil {
+			return err
+		}
+	}
 	if err := service.ImportSeed(ctx, seed); err != nil {
 		return err
 	}
@@ -92,4 +100,52 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	logger.Info("project pool service started")
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func openStackProjectSeed(ctx context.Context, cfg config.Config) (projectpoolusecase.Seed, error) {
+	client := openstack.NewClient(cfg.OpenStack)
+	info, err := client.CurrentProject(ctx)
+	if err != nil {
+		return projectpoolusecase.Seed{}, err
+	}
+	return seedFromOpenStackProject(info, cfg.ProjectPool, cfg.OpenStack.ProjectName), nil
+}
+
+func seedFromOpenStackProject(info *openstack.ProjectInfo, cfg config.ProjectPoolConfig, fallbackProjectName string) projectpoolusecase.Seed {
+	domainID := strings.TrimSpace(info.DomainID)
+	domainName := strings.TrimSpace(info.DomainName)
+	if domainID == "" {
+		domainID = strings.TrimSpace(info.DomainName)
+	}
+	if domainID == "" {
+		domainID = strings.TrimSpace(cfg.DefaultDomainName)
+	}
+	if domainName == "" {
+		domainName = strings.TrimSpace(cfg.DefaultDomainName)
+	}
+	if domainName == "" {
+		domainName = domainID
+	}
+	courseID := strings.TrimSpace(cfg.DefaultCourseID)
+	return projectpoolusecase.Seed{
+		Domains: []projectpoolusecase.SeedDomain{{
+			DomainID: domainID,
+			CourseID: courseID,
+			Name:     domainName,
+		}},
+		Projects: []projectpoolusecase.SeedProject{{
+			ProjectID: info.ID,
+			DomainID:  domainID,
+			Name:      firstNonEmpty(info.Name, fallbackProjectName, info.ID),
+		}},
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

@@ -137,8 +137,8 @@ func (s *Service) handleProjectAllocated(ctx context.Context, envelope contracts
 		LabRunID:  payload.LabRunID,
 		ProjectID: payload.ProjectID,
 		Resources: commands.LabResourceProfile{
-			VCPU:    16,
-			RAMMiB:  24 * 1024,
+			VCPU:    9,
+			RAMMiB:  16 * 1024,
 			DiskGiB: 214,
 		},
 	})

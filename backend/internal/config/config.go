@@ -71,18 +71,15 @@ type KIConfig struct {
 }
 
 type ProjectPoolConfig struct {
-	SeedFile string `env:"PROJECT_POOL_SEED_FILE"`
-	SeedJSON string `env:"PROJECT_POOL_SEED_JSON"`
+	SeedFile                   string `env:"PROJECT_POOL_SEED_FILE"`
+	SeedJSON                   string `env:"PROJECT_POOL_SEED_JSON"`
+	AutoImportOpenStackProject bool   `env:"PROJECT_POOL_AUTO_IMPORT_OPENSTACK_PROJECT" envDefault:"true"`
+	DefaultCourseID            string `env:"PROJECT_POOL_DEFAULT_COURSE_ID" envDefault:"course-3"`
+	DefaultDomainName          string `env:"PROJECT_POOL_DEFAULT_DOMAIN_NAME" envDefault:"Hackhaton"`
 }
 
 type CapacityConfig struct {
-	ThresholdPercent   float64 `env:"CAPACITY_THRESHOLD_PERCENT" envDefault:"90"`
-	DemoVCPUs          int     `env:"CAPACITY_DEMO_VCPUS" envDefault:"128"`
-	DemoVCPUsFree      int     `env:"CAPACITY_DEMO_VCPUS_FREE" envDefault:"96"`
-	DemoRAMMiB         int64   `env:"CAPACITY_DEMO_RAM_MIB" envDefault:"262144"`
-	DemoRAMFreeMiB     int64   `env:"CAPACITY_DEMO_RAM_FREE_MIB" envDefault:"196608"`
-	DemoStorageGiB     int64   `env:"CAPACITY_DEMO_STORAGE_GIB" envDefault:"4096"`
-	DemoStorageUsedGiB int64   `env:"CAPACITY_DEMO_STORAGE_USED_GIB" envDefault:"1024"`
+	ThresholdPercent float64 `env:"CAPACITY_THRESHOLD_PERCENT" envDefault:"90"`
 }
 
 type CloudConfig struct {

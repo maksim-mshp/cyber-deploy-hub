@@ -13,6 +13,7 @@ import (
 	gcopenstack "github.com/gophercloud/gophercloud/v2/openstack"
 	blocklimits "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/limits"
 	computelimits "github.com/gophercloud/gophercloud/v2/openstack/compute/v2/limits"
+	tokens3 "github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 
 	"cyber-deploy-hub/internal/config"
 )
@@ -35,6 +36,13 @@ type ProjectQuota struct {
 	DiskGiBFree int64
 }
 
+type ProjectInfo struct {
+	ID         string
+	Name       string
+	DomainID   string
+	DomainName string
+}
+
 func NewClient(cfg config.OpenStackConfig) *Client {
 	return &Client{cfg: cfg}
 }
@@ -52,6 +60,30 @@ func (c *Client) Check(ctx context.Context) error {
 		return errors.New("openstack service catalog is incomplete")
 	}
 	return nil
+}
+
+func (c *Client) CurrentProject(ctx context.Context) (*ProjectInfo, error) {
+	provider, err := c.Provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, ok := provider.GetAuthResult().(tokens3.CreateResult)
+	if !ok {
+		return nil, errors.New("keystone v3 auth result is unavailable")
+	}
+	project, err := result.ExtractProject()
+	if err != nil {
+		return nil, fmt.Errorf("extract scoped project: %w", err)
+	}
+	if project == nil || project.ID == "" {
+		return nil, errors.New("keystone token is not project-scoped")
+	}
+	return &ProjectInfo{
+		ID:         project.ID,
+		Name:       project.Name,
+		DomainID:   project.Domain.ID,
+		DomainName: project.Domain.Name,
+	}, nil
 }
 
 func (c *Client) ProjectQuota(ctx context.Context, projectID string) (*ProjectQuota, error) {
@@ -132,20 +164,29 @@ func (c *Client) Provider(ctx context.Context) (*gophercloud.ProviderClient, err
 		Username:         c.cfg.Username,
 		Password:         c.cfg.Password,
 		DomainName:       c.cfg.UserDomainName,
-		TenantID:         c.cfg.ProjectID,
-		TenantName:       c.cfg.ProjectName,
 		AllowReauth:      c.cfg.AllowReauth,
-		Scope: &gophercloud.AuthScope{
-			ProjectID:   c.cfg.ProjectID,
-			ProjectName: c.cfg.ProjectName,
-			DomainName:  c.cfg.ProjectDomainName,
-		},
+		Scope:            authScope(c.cfg),
+	}
+	if c.cfg.ProjectID != "" {
+		authOptions.TenantID = c.cfg.ProjectID
+	} else {
+		authOptions.TenantName = c.cfg.ProjectName
 	}
 
 	if err := gcopenstack.Authenticate(ctx, provider, authOptions); err != nil {
 		return nil, err
 	}
 	return provider, nil
+}
+
+func authScope(cfg config.OpenStackConfig) *gophercloud.AuthScope {
+	if cfg.ProjectID != "" {
+		return &gophercloud.AuthScope{ProjectID: cfg.ProjectID}
+	}
+	return &gophercloud.AuthScope{
+		ProjectName: cfg.ProjectName,
+		DomainName:  cfg.ProjectDomainName,
+	}
 }
 
 func (c *Client) timeout() time.Duration {

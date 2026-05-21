@@ -78,7 +78,7 @@ WHERE lab_run_id = $1`,
 SELECT name,
        image_id,
        flavor_id,
-       COALESCE(fixed_ip, ''),
+       COALESCE(fixed_ip::text, ''),
        disk_gib,
        COALESCE(server_id, ''),
        COALESCE(volume_id, ''),
@@ -201,7 +201,7 @@ INSERT INTO cloud_adapter.instances (
     port_id,
     state
 )
-VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)`,
+VALUES ($1, $2, $3, $4, NULLIF($5, '')::inet, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)`,
 			labRunID,
 			instance.Name,
 			instance.ImageID,

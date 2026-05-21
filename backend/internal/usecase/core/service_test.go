@@ -64,6 +64,11 @@ func TestServiceAdvancesAfterProjectAllocated(t *testing.T) {
 	if len(transition.Next) != 1 || transition.Next[0].MessageType != commands.CapacityCheckV1.String() {
 		t.Fatalf("next = %#v", transition.Next)
 	}
+	var nextPayload commands.CapacityCheckV1Payload
+	decodeTestPayload(t, transition.Next[0], &nextPayload)
+	if nextPayload.Resources.VCPU != 9 || nextPayload.Resources.RAMMiB != 16*1024 || nextPayload.Resources.DiskGiB != 214 {
+		t.Fatalf("lab 3 resources = %#v", nextPayload.Resources)
+	}
 }
 
 func TestServiceFailsAndReleasesProjectWhenCapacityDenied(t *testing.T) {

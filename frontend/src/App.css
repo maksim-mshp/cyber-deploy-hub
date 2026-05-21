@@ -138,6 +138,23 @@ h2 {
   gap: 10px;
 }
 
+.student-field {
+  display: grid;
+  min-width: 220px;
+  gap: 5px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.student-field input {
+  min-height: 38px;
+  border: 1px solid #cad7e6;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #243143;
+  font: inherit;
+}
+
 button {
   display: inline-flex;
   min-height: 38px;
@@ -290,7 +307,11 @@ button:disabled {
 .status.checking_capacity,
 .status.issuing_vdi_access,
 .status.verifying,
-.status.running {
+.status.running,
+.status.requested,
+.status.allocating_project,
+.status.pending,
+.status.event {
   color: #175cd3;
   background: #dbeafe;
 }
@@ -310,6 +331,26 @@ button:disabled {
 .status.cleaning {
   color: #b54708;
   background: #fef0c7;
+}
+
+.status.finished {
+  color: #475467;
+  background: #eef2f7;
+}
+
+.status.empty {
+  color: #667085;
+  background: #f2f4f7;
+}
+
+.empty-state {
+  min-height: 44px;
+  border: 1px dashed #cad7e6;
+  border-radius: 8px;
+  padding: 12px;
+  color: #667085;
+  background: #f8fbff;
+  font-size: 13px;
 }
 
 .flow {

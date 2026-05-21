@@ -38,6 +38,7 @@ type OpenStackChecker interface {
 }
 
 type ReadModel interface {
+	ListLabRuns(ctx context.Context, limit int) (readmodel.LabRunsView, error)
 	GetLabRun(ctx context.Context, labRunID string) (readmodel.LabRunView, bool, error)
 	GetVDIAccess(ctx context.Context, labRunID string) (readmodel.VDIAccessView, bool, error)
 	ListLabRunEvents(ctx context.Context, labRunID string, afterID int64, limit int) ([]readmodel.LabRunEvent, error)
@@ -72,6 +73,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /api/admin/openstack/ping", s.handleOpenStackPing)
+	mux.HandleFunc("GET /api/labs", s.handleListLabs)
 	mux.HandleFunc("POST /api/labs", s.handleRequestLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}", s.handleGetLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}/vdi", s.handleGetLabVDI)
@@ -138,6 +140,20 @@ func (s *Server) handleRequestLab(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleListLabs(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	limit := int(parseInt64(r.URL.Query().Get("limit"), 50))
+	view, err := s.read.ListLabRuns(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleGetLab(w http.ResponseWriter, r *http.Request) {

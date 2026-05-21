@@ -18,6 +18,10 @@ type LabRunView struct {
 	Events         []LabRunEvent `json:"events"`
 }
 
+type LabRunsView struct {
+	Labs []LabRunView `json:"labs"`
+}
+
 type LabRunEvent struct {
 	ID          int64           `json:"id"`
 	LabRunID    string          `json:"lab_run_id"`

@@ -59,7 +59,7 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	}
 
 	result := DeployResult{KeyPairName: keyPairName(req.LabRunID)}
-	keyPair, err := keypairs.Create(deployCtx, services.Compute, keypairs.CreateOpts{Name: result.KeyPairName}).Extract()
+	keyPair, err := createKeyPair(deployCtx, services.Compute, result.KeyPairName)
 	if err != nil {
 		return result, &DeployError{Result: result, Err: fmt.Errorf("create keypair: %w", err)}
 	}
@@ -76,6 +76,20 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 		}
 	}
 	return result, nil
+}
+
+func createKeyPair(ctx context.Context, compute *gophercloud.ServiceClient, name string) (*keypairs.KeyPair, error) {
+	keyPair, err := keypairs.Create(ctx, compute, keypairs.CreateOpts{Name: name}).Extract()
+	if err == nil {
+		return keyPair, nil
+	}
+	if !gophercloud.ResponseCodeIs(err, http.StatusConflict) {
+		return nil, err
+	}
+	if deleteErr := keypairs.Delete(ctx, compute, name, nil).ExtractErr(); deleteErr != nil && !gophercloud.ResponseCodeIs(deleteErr, http.StatusNotFound) {
+		return nil, deleteErr
+	}
+	return keypairs.Create(ctx, compute, keypairs.CreateOpts{Name: name}).Extract()
 }
 
 func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) error {
@@ -183,7 +197,6 @@ func (p *OpenStackProvider) createPort(ctx context.Context, network *gophercloud
 		NetworkID:    p.cfg.PrivateNetworkID,
 		Name:         resourceName(req.LabRunID, blueprint.Name, "port"),
 		AdminStateUp: &adminUp,
-		ProjectID:    req.ProjectID,
 	}
 	if blueprint.FixedIP != "" {
 		opts.FixedIPs = []ports.IP{{SubnetID: p.cfg.PrivateSubnetID, IPAddress: blueprint.FixedIP}}
@@ -354,22 +367,4 @@ func nonZeroDuration(value time.Duration, fallback time.Duration) time.Duration 
 		return fallback
 	}
 	return value
-}
-
-type UnavailableProvider struct {
-	Reason string
-}
-
-func (p UnavailableProvider) Deploy(context.Context, DeployRequest) (DeployResult, error) {
-	if p.Reason == "" {
-		p.Reason = "cloud provider is unavailable"
-	}
-	return DeployResult{}, errors.New(p.Reason)
-}
-
-func (p UnavailableProvider) Cleanup(context.Context, Deployment) error {
-	if p.Reason == "" {
-		p.Reason = "cloud provider is unavailable"
-	}
-	return errors.New(p.Reason)
 }

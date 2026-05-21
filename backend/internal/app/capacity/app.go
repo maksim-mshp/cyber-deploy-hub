@@ -2,12 +2,12 @@ package capacity
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/config"
 	"cyber-deploy-hub/internal/inbox"
 	"cyber-deploy-hub/internal/ki"
@@ -65,15 +65,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		kiConfig.ProjectID = cfg.OpenStack.ProjectID
 	}
 	kiClient := ki.NewClient(kiConfig)
-	openStackClient := openstack.NewClient(cfg.OpenStack)
-	var provider capacityusecase.StatProvider = capacityusecase.NewStaticProvider(cfg.Capacity)
-	var quota capacityusecase.QuotaChecker = capacityusecase.NoopQuotaChecker{}
-	if kiClient.Configured() {
-		provider = capacityusecase.NewKIProvider(kiClient)
+	if !kiClient.Configured() {
+		return errors.New("real KI capacity provider is not configured")
 	}
-	if openStackClient.Configured() {
-		quota = capacityusecase.NewOpenStackQuotaChecker(openStackClient)
-	}
+	provider := capacityusecase.NewKIProvider(kiClient, cfg.KI.ProjectID)
+	quota := capacityusecase.NewKIQuotaChecker(kiClient)
 	service, err := capacityusecase.NewService(serviceName, provider, quota, repo, cfg.Capacity.ThresholdPercent)
 	if err != nil {
 		return err

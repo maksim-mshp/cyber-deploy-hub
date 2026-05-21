@@ -40,8 +40,8 @@ func Evaluate(snapshot Snapshot, req commands.LabResourceProfile, threshold floa
 		Threshold: threshold,
 	}
 
-	decision.PredictedCPU = percent(int64(snapshot.VCPUsTotal-snapshot.VCPUsFree+req.VCPU), int64(snapshot.VCPUsTotal))
-	decision.PredictedRAM = percent(snapshot.RAMMiBTotal-snapshot.RAMMiBFree+int64(req.RAMMiB), snapshot.RAMMiBTotal)
+	decision.PredictedCPU = percent(usedAfterRequest(int64(snapshot.VCPUsTotal), int64(snapshot.VCPUsFree), int64(req.VCPU)), int64(snapshot.VCPUsTotal))
+	decision.PredictedRAM = percent(usedAfterRequest(snapshot.RAMMiBTotal, snapshot.RAMMiBFree, int64(req.RAMMiB)), snapshot.RAMMiBTotal)
 	decision.PredictedStorage = percent(snapshot.StorageGiBUsed+req.DiskGiB, snapshot.StorageGiBTotal)
 
 	reasons := make([]string, 0, 4)
@@ -68,6 +68,17 @@ func percent(used int64, total int64) float64 {
 	if total <= 0 {
 		return 100
 	}
+	if used < 0 {
+		used = 0
+	}
 	value := (float64(used) / float64(total)) * 100
 	return math.Round(value*100) / 100
+}
+
+func usedAfterRequest(total int64, free int64, requested int64) int64 {
+	used := total - free
+	if used < 0 {
+		used = 0
+	}
+	return used + requested
 }

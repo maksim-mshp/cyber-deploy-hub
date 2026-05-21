@@ -20,53 +20,8 @@ import {
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
-
-const initialLabs = [
-  {
-    id: '33333333-3333-4333-8333-333333333333',
-    student: 'ivan.petrov',
-    course: 'Linux administration',
-    lab: 'LAB-02',
-    state: 'READY',
-    vdi: '/vdi/session/demo-ready',
-    cpu: 16,
-    ram: 24,
-    disk: 214,
-    updated: '12:18',
-    incident: null,
-  },
-  {
-    id: '44444444-4444-4444-8444-444444444444',
-    student: 'anna.sidorova',
-    course: 'Network services',
-    lab: 'LAB-01',
-    state: 'DEPLOYING',
-    vdi: '',
-    cpu: 12,
-    ram: 18,
-    disk: 140,
-    updated: '12:11',
-    incident: null,
-  },
-  {
-    id: '55555555-5555-4555-8555-555555555555',
-    student: 'moodle.user42',
-    course: 'Windows domain',
-    lab: 'LAB-05',
-    state: 'FAILED',
-    vdi: '',
-    cpu: 20,
-    ram: 32,
-    disk: 260,
-    updated: '11:54',
-    incident: {
-      code: 'CAPACITY_DENIED',
-      stage: 'CHECKING_CAPACITY',
-      correlation: '9c1b2a8e',
-      action: 'Освободить ресурсы или поднять threshold после проверки кластера',
-    },
-  },
-]
+const LAB3_COURSE_ID = import.meta.env.VITE_LAB3_COURSE_ID ?? 'course-3'
+const LAB3_LAB_ID = import.meta.env.VITE_LAB3_LAB_ID ?? 'lab-3-storage'
 
 const statusFlow = [
   'REQUESTED',
@@ -83,64 +38,132 @@ const statusFlow = [
   'FAILED',
 ]
 
-const initialCheckRuns = [
-  {
-    id: 'demo-check-1',
-    profile_id: 'default',
-    state: 'PASSED',
-    passed: true,
-    finished_at: new Date().toISOString(),
-    results: [
-      { sequence: 1, name: 'SSH package installed', type: 'package_installed', passed: true, exit_code: 0, message: 'passed' },
-      { sequence: 2, name: 'OS release file exists', type: 'file_exists', passed: true, exit_code: 0, message: 'passed' },
-      { sequence: 3, name: 'SSH port listening', type: 'port_open', passed: true, exit_code: 0, message: 'passed' },
-    ],
-  },
-]
+const defaultSettings = {
+  lab_ttl_seconds: 7200,
+  freeze_ttl_seconds: 86400,
+  capacity_threshold_percent: 90,
+}
 
-const auditRows = [
-  ['12:18', 'evt.vdi.access_issued.v1', 'READY', 'VDI token issued'],
-  ['12:16', 'evt.lifecycle.cleanup_scheduled.v1', 'READY', 'Cleanup at 14:16'],
-  ['12:11', 'evt.cloud.vdi_deployed.v1', 'DEPLOYING', '5 VM instances active'],
-  ['11:54', 'evt.capacity.denied.v1', 'FAILED', 'Predicted storage exceeds 90%'],
-]
-
-const projectStates = [
-  ['FREE', 18],
-  ['ALLOCATED', 7],
-  ['QUARANTINED', 1],
-]
+const lab3Resources = {
+  cpu: 9,
+  ram: 16,
+  disk: 214,
+  instances: 5,
+}
 
 function App() {
-  const [labs, setLabs] = useState(initialLabs)
-  const [selectedID, setSelectedID] = useState(initialLabs[0].id)
-  const [notice, setNotice] = useState('API gateway готов к командам')
-  const [checkRuns, setCheckRuns] = useState(initialCheckRuns)
-  const [settings, setSettings] = useState({
-    lab_ttl_seconds: 7200,
-    freeze_ttl_seconds: 86400,
-    capacity_threshold_percent: 90,
-  })
+  const [labs, setLabs] = useState([])
+  const [selectedID, setSelectedID] = useState('')
+  const [selectedLab, setSelectedLab] = useState(null)
+  const [selectedVDI, setSelectedVDI] = useState(null)
+  const [projectPool, setProjectPool] = useState({ states: {}, projects: [] })
+  const [auditRows, setAuditRows] = useState([])
+  const [checkRuns, setCheckRuns] = useState([])
+  const [settings, setSettings] = useState(defaultSettings)
+  const [studentID, setStudentID] = useState('')
+  const [notice, setNotice] = useState('Ожидание данных от API')
+  const [loading, setLoading] = useState(false)
 
-  const selectedLab = useMemo(
-    () => labs.find((lab) => lab.id === selectedID) ?? labs[0],
-    [labs, selectedID],
-  )
+  const activeLab = selectedLab ?? labs.find((lab) => lab.id === selectedID) ?? labs[0] ?? null
+  const capacity = useMemo(() => capacityFromEvents(activeLab?.events), [activeLab])
+  const activeCount = labs.filter((lab) => !['FAILED', 'FINISHED'].includes(lab.state)).length
+  const freeProjects = projectPool.states?.FREE ?? 0
+  const latestCheck = checkRuns[0]
+  const canOperateLab = activeLab && !['CLEANING', 'FAILED', 'FINISHED'].includes(activeLab.state)
 
-  const loadCheckRuns = useCallback(async (labRunID) => {
-    try {
-      const response = await fetch(`${API_BASE}/api/labs/${labRunID}/checks?limit=3`)
-      if (!response.ok) {
-        throw new Error(response.statusText)
-      }
-      const payload = await response.json()
-      if (payload.runs?.length) {
-        setCheckRuns(payload.runs)
-      }
-    } catch {
-      setCheckRuns(initialCheckRuns)
+  const requestJSON = useCallback(async (path, options = {}) => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      ...options,
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(payload.error?.message ?? response.statusText)
     }
+    return payload
   }, [])
+
+  const loadLabs = useCallback(async () => {
+    const payload = await requestJSON('/api/labs?limit=30')
+    const nextLabs = payload.labs ?? []
+    setLabs(nextLabs)
+    setSelectedID((current) => current || nextLabs[0]?.id || '')
+    return nextLabs
+  }, [requestJSON])
+
+  const loadProjectPool = useCallback(async () => {
+    const payload = await requestJSON('/api/admin/project-pool')
+    setProjectPool({ states: payload.states ?? {}, projects: payload.projects ?? [] })
+  }, [requestJSON])
+
+  const loadSettings = useCallback(async () => {
+    const payload = await requestJSON('/api/admin/settings')
+    setSettings({ ...defaultSettings, ...(payload.values ?? {}) })
+  }, [requestJSON])
+
+  const loadAudit = useCallback(async () => {
+    const payload = await requestJSON('/api/admin/audit?limit=12')
+    setAuditRows(payload.events ?? [])
+  }, [requestJSON])
+
+  const loadSelectedDetails = useCallback(async (labRunID) => {
+    if (!labRunID) {
+      setSelectedLab(null)
+      setSelectedVDI(null)
+      setCheckRuns([])
+      return
+    }
+    const [lab, checks, vdi] = await Promise.all([
+      requestJSON(`/api/labs/${labRunID}`),
+      requestJSON(`/api/labs/${labRunID}/checks?limit=3`).catch(() => ({ runs: [] })),
+      requestJSON(`/api/labs/${labRunID}/vdi`).catch(() => null),
+    ])
+    setSelectedLab(lab)
+    setSelectedVDI(vdi)
+    setCheckRuns(checks.runs ?? [])
+  }, [requestJSON])
+
+  const waitForLabInReadModel = useCallback(async (labRunID) => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const nextLabs = await loadLabs()
+      if (nextLabs.some((lab) => lab.id === labRunID)) {
+        return true
+      }
+      await sleep(500)
+    }
+    return false
+  }, [loadLabs])
+
+  const refreshAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const nextLabs = await loadLabs()
+      await Promise.all([loadProjectPool(), loadSettings(), loadAudit()])
+      const nextSelected = selectedID || nextLabs[0]?.id || ''
+      if (nextSelected) {
+        await loadSelectedDetails(nextSelected)
+      }
+      setNotice('Данные обновлены из backend read model')
+    } catch (error) {
+      setNotice(`Ошибка обновления: ${error.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [loadAudit, loadLabs, loadProjectPool, loadSelectedDetails, loadSettings, selectedID])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      refreshAll()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadSelectedDetails(selectedID).catch((error) => setNotice(`Ошибка стенда: ${error.message}`))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadSelectedDetails, selectedID])
 
   useEffect(() => {
     if (!selectedID || typeof EventSource === 'undefined') {
@@ -150,95 +173,75 @@ function App() {
     source.addEventListener('lab_run', (event) => {
       const payload = JSON.parse(event.data)
       setNotice(`Live update: ${payload.state}`)
-      setLabs((items) =>
-        items.map((lab) =>
-          lab.id === selectedID
-            ? { ...lab, state: payload.state, updated: new Date(payload.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
-            : lab,
-        ),
-      )
-      if (payload.message_type?.includes('checker') || payload.state?.includes('VERIF')) {
-        loadCheckRuns(selectedID)
-      }
+      loadSelectedDetails(selectedID).catch((error) => setNotice(`Ошибка live update: ${error.message}`))
+      loadLabs().catch(() => {})
     })
     source.onerror = () => {
       source.close()
     }
     return () => source.close()
-  }, [loadCheckRuns, selectedID])
+  }, [loadLabs, loadSelectedDetails, selectedID])
 
   async function sendCommand(path, body = {}) {
     setNotice(`Команда отправляется: ${path}`)
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
+      const payload = await requestJSON(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload.error?.message ?? response.statusText)
-      }
-      const payload = await response.json()
       setNotice(`Команда принята: ${payload.command_id ?? payload.lab_run_id}`)
+      if (payload.lab_run_id) {
+        const visible = await waitForLabInReadModel(payload.lab_run_id)
+        if (visible) {
+          setSelectedID(payload.lab_run_id)
+          await Promise.all([loadSelectedDetails(payload.lab_run_id), loadProjectPool(), loadSettings(), loadAudit()])
+          return payload
+        }
+      }
+      await refreshAll()
+      return payload
     } catch (error) {
-      setNotice(`Локальный режим: ${error.message}`)
+      setNotice(`Ошибка команды: ${error.message}`)
+      return null
     }
   }
 
-  function updateLabState(id, state) {
-    setLabs((items) =>
-      items.map((lab) =>
-        lab.id === id
-          ? { ...lab, state, updated: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
-          : lab,
-      ),
-    )
+  function requestLab3() {
+    const normalizedStudentID = studentID.trim()
+    if (!normalizedStudentID) {
+      setNotice('Укажи student_id перед запуском лабораторной 3')
+      return
+    }
+    sendCommand('/api/labs', {
+      student_id: normalizedStudentID,
+      course_id: LAB3_COURSE_ID,
+      lab_id: LAB3_LAB_ID,
+      source: 'ui',
+      idempotency_key: `lab3:${normalizedStudentID}:${Date.now()}`,
+    })
   }
 
   function freezeLab() {
-    updateLabState(selectedLab.id, 'FROZEN')
-    sendCommand(`/api/labs/${selectedLab.id}/freeze`, {
+    if (!activeLab) return
+    sendCommand(`/api/labs/${activeLab.id}/freeze`, {
       reason: 'support_freeze',
-      idempotency_key: `freeze:${selectedLab.id}`,
+      idempotency_key: `freeze:${activeLab.id}:${Date.now()}`,
     })
   }
 
   function cleanupLab() {
-    updateLabState(selectedLab.id, 'CLEANING')
-    sendCommand(`/api/labs/${selectedLab.id}/cleanup`, {
+    if (!activeLab) return
+    sendCommand(`/api/labs/${activeLab.id}/cleanup`, {
       reason: 'teacher_cleanup',
-      idempotency_key: `cleanup:${selectedLab.id}`,
+      idempotency_key: `cleanup:${activeLab.id}:${Date.now()}`,
     })
   }
 
   function checkLab() {
-    updateLabState(selectedLab.id, 'VERIFYING')
-    setCheckRuns([
-      {
-        id: `pending-${selectedLab.id}`,
-        profile_id: 'default',
-        state: 'RUNNING',
-        passed: false,
-        finished_at: new Date().toISOString(),
-        results: [
-          { sequence: 1, name: 'SSH profile queued', type: 'command_exit_code', passed: true, exit_code: 0, message: 'command accepted' },
-        ],
-      },
-    ])
-    sendCommand(`/api/labs/${selectedLab.id}/check`, {
+    if (!activeLab) return
+    sendCommand(`/api/labs/${activeLab.id}/check`, {
       profile_id: 'default',
-      idempotency_key: `check:${selectedLab.id}`,
-    })
-  }
-
-  function requestLab() {
-    sendCommand('/api/labs', {
-      student_id: 'demo.student',
-      course_id: 'course-linux',
-      lab_id: 'LAB-02',
-      source: 'ui',
-      idempotency_key: `ui:${Date.now()}`,
+      idempotency_key: `check:${activeLab.id}:${Date.now()}`,
     })
   }
 
@@ -275,43 +278,45 @@ function App() {
       <main>
         <section className="summary-band" id="monitoring">
           <div>
-            <p className="eyebrow">VDI, OpenStack, Moodle, NATS</p>
+            <p className="eyebrow">Лабораторная 3 · OpenStack · NATS</p>
             <h1>Консоль управления лабораторными стендами</h1>
           </div>
           <div className="summary-actions">
-            <button type="button" className="primary" onClick={requestLab}>
-              <Play size={17} /> Запустить стенд
+            <label className="student-field">
+              <span>student_id</span>
+              <input id="student_id" name="student_id" value={studentID} onChange={(event) => setStudentID(event.target.value)} placeholder="moodle:42" />
+            </label>
+            <button type="button" className="primary" onClick={requestLab3} disabled={loading}>
+              <Play size={17} /> Запустить лабораторную 3
             </button>
-            <button type="button" className="secondary" onClick={() => setNotice('Статусы обновлены из read model')}>
+            <button type="button" className="secondary" onClick={refreshAll} disabled={loading}>
               <RefreshCw size={17} /> Обновить
             </button>
           </div>
         </section>
 
         <section className="metrics-grid" aria-label="Ключевые метрики">
-          <Metric icon={Activity} label="Активные стенды" value="26" hint="7 в деплое" />
-          <Metric icon={Database} label="Свободные проекты" value="18" hint="1 в карантине" />
-          <Metric icon={HardDrive} label="Storage forecast" value="74%" hint="threshold 90%" />
-          <Metric icon={ShieldCheck} label="Проверки SSH" value="91%" hint="успешных за день" />
+          <Metric icon={Activity} label="Активные стенды" value={activeCount} hint={`${labs.length} всего в read model`} />
+          <Metric icon={Database} label="Свободные проекты" value={freeProjects} hint={`${projectPool.projects?.length ?? 0} реальных проектов`} />
+          <Metric icon={HardDrive} label="Storage forecast" value={capacity.storage} hint={`threshold ${capacity.threshold}`} />
+          <Metric icon={ShieldCheck} label="Проверки SSH" value={latestCheck?.state ?? 'нет'} hint={latestCheck ? `profile ${latestCheck.profile_id}` : 'нет запусков'} />
         </section>
 
         <section className="workspace">
           <div className="panel labs-panel" id="labs">
-            <PanelTitle icon={MonitorUp} title="Стенды" right={<StatusPill state={selectedLab.state} />} />
+            <PanelTitle icon={MonitorUp} title="Стенды" right={<StatusPill state={activeLab?.state ?? 'EMPTY'} />} />
             <div className="lab-list">
+              {labs.length === 0 && <div className="empty-state">В read model пока нет лабораторных запусков.</div>}
               {labs.map((lab) => (
                 <button
                   key={lab.id}
                   type="button"
-                  className={`lab-row ${lab.id === selectedID ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedID(lab.id)
-                    loadCheckRuns(lab.id)
-                  }}
+                  className={`lab-row ${lab.id === activeLab?.id ? 'active' : ''}`}
+                  onClick={() => setSelectedID(lab.id)}
                 >
                   <span>
-                    <strong>{lab.student}</strong>
-                    <small>{lab.course} · {lab.lab}</small>
+                    <strong>{lab.student_id}</strong>
+                    <small>{lab.course_id} · {lab.lab_id}</small>
                   </span>
                   <StatusPill state={lab.state} />
                 </button>
@@ -320,10 +325,10 @@ function App() {
           </div>
 
           <div className="panel detail-panel">
-            <PanelTitle icon={Network} title="State machine" right={<span className="muted">{selectedLab.updated}</span>} />
+            <PanelTitle icon={Network} title="State machine" right={<span className="muted">{formatTime(activeLab?.updated_at)}</span>} />
             <div className="flow">
               {statusFlow.map((state) => (
-                <div key={state} className={`flow-step ${flowClass(selectedLab.state, state)}`}>
+                <div key={state} className={`flow-step ${flowClass(activeLab?.state, state)}`}>
                   <span></span>
                   <small>{stateLabel(state)}</small>
                 </div>
@@ -331,42 +336,42 @@ function App() {
             </div>
 
             <div className="detail-grid">
-              <div className="resource-map" aria-label="Топология стенда">
+              <div className="resource-map" aria-label="Топология лабораторной 3">
                 <div className="node moodle">Moodle</div>
                 <div className="node gateway">Gateway</div>
-                <div className="node vm">VDI VM</div>
+                <div className="node vm">5 VM</div>
                 <div className="node storage">Storage</div>
               </div>
               <div className="resource-table">
-                <div><span>vCPU</span><strong>{selectedLab.cpu}</strong></div>
-                <div><span>RAM</span><strong>{selectedLab.ram} GiB</strong></div>
-                <div><span>Disk</span><strong>{selectedLab.disk} GiB</strong></div>
-                <div><span>VDI</span><strong>{selectedLab.vdi ? 'issued' : 'pending'}</strong></div>
+                <div><span>vCPU</span><strong>{lab3Resources.cpu}</strong></div>
+                <div><span>RAM</span><strong>{lab3Resources.ram} GiB</strong></div>
+                <div><span>Disk</span><strong>{lab3Resources.disk} GiB</strong></div>
+                <div><span>VDI</span><strong>{selectedVDI?.available ? 'issued' : 'pending'}</strong></div>
               </div>
             </div>
 
-            {selectedLab.incident && (
+            {activeLab?.failure_code && (
               <div className="incident">
                 <AlertTriangle size={19} />
                 <div>
-                  <strong>{selectedLab.incident.code}</strong>
-                  <span>{selectedLab.incident.stage} · correlation {selectedLab.incident.correlation}</span>
-                  <p>{selectedLab.incident.action}</p>
+                  <strong>{activeLab.failure_code}</strong>
+                  <span>{activeLab.state} · {activeLab.id}</span>
+                  <p>{activeLab.failure_message}</p>
                 </div>
               </div>
             )}
 
             <div className="toolbar" id="checks">
-              <button type="button" className="primary" disabled={!selectedLab.vdi} onClick={() => window.open(selectedLab.vdi, '_blank')}>
+              <button type="button" className="primary" disabled={!selectedVDI?.available} onClick={() => window.open(selectedVDI.url, '_blank')}>
                 <MonitorUp size={17} /> VDI
               </button>
-              <button type="button" className="secondary" onClick={freezeLab}>
+              <button type="button" className="secondary" disabled={!canOperateLab} onClick={freezeLab}>
                 <Snowflake size={17} /> Freeze
               </button>
-              <button type="button" className="secondary" onClick={checkLab}>
+              <button type="button" className="secondary" disabled={!canOperateLab} onClick={checkLab}>
                 <TerminalSquare size={17} /> Check
               </button>
-              <button type="button" className="danger" onClick={cleanupLab}>
+              <button type="button" className="danger" disabled={!canOperateLab} onClick={cleanupLab}>
                 <Trash2 size={17} /> Cleanup
               </button>
             </div>
@@ -375,51 +380,53 @@ function App() {
 
         <section className="operations-grid">
           <div className="panel" id="capacity">
-            <PanelTitle icon={Activity} title="Capacity" right={<span className="ok">OK</span>} />
+            <PanelTitle icon={Activity} title="Capacity" right={<span className={capacity.ok ? 'ok' : 'muted'}>{capacity.label}</span>} />
             <div className="capacity-bars">
-              <Bar label="CPU" value={62} />
-              <Bar label="RAM" value={71} />
-              <Bar label="Storage" value={74} />
+              <Bar label="CPU" value={capacity.cpuValue} />
+              <Bar label="RAM" value={capacity.ramValue} />
+              <Bar label="Storage" value={capacity.storageValue} />
             </div>
           </div>
 
           <div className="panel" id="pool">
             <PanelTitle icon={Database} title="Пул проектов" />
             <div className="pool-list">
-              {projectStates.map(([state, count]) => (
+              {Object.entries(projectPool.states ?? {}).map(([state, count]) => (
                 <div key={state}>
                   <span>{state}</span>
                   <strong>{count}</strong>
                 </div>
               ))}
+              {Object.keys(projectPool.states ?? {}).length === 0 && <div className="empty-state">Пул будет импортирован из OpenStack project scope.</div>}
             </div>
           </div>
 
           <div className="panel settings-panel">
             <PanelTitle icon={Settings} title="Настройки" />
-            <NumberField label="Lab TTL, sec" value={settings.lab_ttl_seconds} onChange={(value) => setSettings({ ...settings, lab_ttl_seconds: value })} />
-            <NumberField label="Freeze TTL, sec" value={settings.freeze_ttl_seconds} onChange={(value) => setSettings({ ...settings, freeze_ttl_seconds: value })} />
-            <NumberField label="Capacity threshold, %" value={settings.capacity_threshold_percent} onChange={(value) => setSettings({ ...settings, capacity_threshold_percent: value })} />
+            <NumberField name="lab_ttl_seconds" label="Lab TTL, sec" value={settings.lab_ttl_seconds} onChange={(value) => setSettings({ ...settings, lab_ttl_seconds: value })} />
+            <NumberField name="freeze_ttl_seconds" label="Freeze TTL, sec" value={settings.freeze_ttl_seconds} onChange={(value) => setSettings({ ...settings, freeze_ttl_seconds: value })} />
+            <NumberField name="capacity_threshold_percent" label="Capacity threshold, %" value={settings.capacity_threshold_percent} onChange={(value) => setSettings({ ...settings, capacity_threshold_percent: value })} />
             <button type="button" className="primary full" onClick={saveSettings}>
               <CheckCircle2 size={17} /> Применить
             </button>
           </div>
 
           <div className="panel checks-panel">
-            <PanelTitle icon={TerminalSquare} title="SSH-проверка" right={<StatusPill state={checkRuns[0]?.state ?? 'PENDING'} />} />
+            <PanelTitle icon={TerminalSquare} title="SSH-проверка" right={<StatusPill state={latestCheck?.state ?? 'PENDING'} />} />
             <div className="check-meta">
               <span>Профиль</span>
-              <strong>{checkRuns[0]?.profile_id ?? 'default'}</strong>
+              <strong>{latestCheck?.profile_id ?? 'default'}</strong>
             </div>
             <div className="check-results">
-              {(checkRuns[0]?.results ?? []).map((result) => (
-                <div key={`${checkRuns[0]?.id}-${result.sequence}`} className={result.passed ? 'passed' : 'failed'}>
+              {(latestCheck?.results ?? []).map((result) => (
+                <div key={`${latestCheck?.id}-${result.sequence}`} className={result.passed ? 'passed' : 'failed'}>
                   <span>{result.sequence}</span>
                   <strong>{result.name}</strong>
                   <code>{result.type}</code>
                   <small>{result.message || `exit ${result.exit_code}`}</small>
                 </div>
               ))}
+              {!latestCheck && <div className="empty-state">Проверки появятся после команды Check.</div>}
             </div>
           </div>
         </section>
@@ -427,14 +434,15 @@ function App() {
         <section className="panel audit-panel" id="audit">
           <PanelTitle icon={Clock3} title="Аудит" right={<span className="notice">{notice}</span>} />
           <div className="audit-table">
-            {auditRows.map(([time, event, state, message]) => (
-              <div key={`${time}-${event}`}>
-                <span>{time}</span>
-                <code>{event}</code>
-                <StatusPill state={state} />
-                <p>{message}</p>
+            {auditRows.map((event) => (
+              <div key={event.id}>
+                <span>{formatTime(event.created_at)}</span>
+                <code>{event.message_type}</code>
+                <StatusPill state={event.state || 'EVENT'} />
+                <p>{eventMessage(event)}</p>
               </div>
             ))}
+            {auditRows.length === 0 && <div className="empty-state">События появятся после запуска лабораторной.</div>}
           </div>
         </section>
       </main>
@@ -463,29 +471,34 @@ function PanelTitle({ icon: Icon, title, right = null }) {
 }
 
 function StatusPill({ state }) {
-  return <span className={`status ${state.toLowerCase()}`}>{state}</span>
+  const normalized = String(state || 'PENDING')
+  return <span className={`status ${normalized.toLowerCase()}`}>{normalized}</span>
 }
 
 function Bar({ label, value }) {
+  const normalized = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
   return (
     <div className="bar-row">
       <span>{label}</span>
-      <div className="bar-track"><div style={{ width: `${value}%` }}></div></div>
-      <strong>{value}%</strong>
+      <div className="bar-track"><div style={{ width: `${normalized}%` }}></div></div>
+      <strong>{Number.isFinite(value) ? `${Math.round(value)}%` : 'нет'}</strong>
     </div>
   )
 }
 
-function NumberField({ label, value, onChange }) {
+function NumberField({ name, label, value, onChange }) {
   return (
-    <label className="number-field">
+    <label className="number-field" htmlFor={name}>
       <span>{label}</span>
-      <input type="number" min="1" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input id={name} name={name} type="number" min="1" value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   )
 }
 
 function flowClass(current, state) {
+  if (!current) {
+    return ''
+  }
   if (current === 'FAILED' && state === 'FAILED') {
     return 'current failed'
   }
@@ -502,6 +515,46 @@ function flowClass(current, state) {
 
 function stateLabel(state) {
   return state.split('_').map((part) => <span key={`${state}-${part}`}>{part}</span>)
+}
+
+function formatTime(value) {
+  if (!value) {
+    return 'нет данных'
+  }
+  return new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+function capacityFromEvents(events = []) {
+  const items = Array.isArray(events) ? events : []
+  const event = [...items].reverse().find((item) => item.message_type?.startsWith('evt.capacity.'))
+  const payload = event?.payload ?? {}
+  const cpuValue = Number(payload.predicted_cpu)
+  const ramValue = Number(payload.predicted_ram)
+  const storageValue = Number(payload.predicted_storage)
+  const threshold = Number(payload.threshold)
+  const hasValues = [cpuValue, ramValue, storageValue].some(Number.isFinite)
+  return {
+    cpuValue,
+    ramValue,
+    storageValue,
+    cpu: Number.isFinite(cpuValue) ? `${Math.round(cpuValue)}%` : 'нет',
+    ram: Number.isFinite(ramValue) ? `${Math.round(ramValue)}%` : 'нет',
+    storage: Number.isFinite(storageValue) ? `${Math.round(storageValue)}%` : 'нет',
+    threshold: Number.isFinite(threshold) ? `${Math.round(threshold)}%` : 'нет',
+    label: hasValues ? (payload.approved === false ? 'DENIED' : 'OK') : 'нет данных',
+    ok: hasValues && payload.approved !== false,
+  }
+}
+
+function eventMessage(event) {
+  const payload = event.payload ?? {}
+  return payload.message || payload.reason || payload.code || payload.state || event.lab_run_id
 }
 
 export default App

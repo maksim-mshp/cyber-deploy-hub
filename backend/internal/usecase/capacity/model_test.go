@@ -80,3 +80,28 @@ func TestEvaluateDeniesWhenFreeResourcesInsufficient(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateHandlesFreeCapacityGreaterThanTotal(t *testing.T) {
+	decision := Evaluate(Snapshot{
+		VCPUsTotal:      16,
+		VCPUsFree:       1904,
+		RAMMiBTotal:     1000,
+		RAMMiBFree:      1200,
+		StorageGiBTotal: 1000,
+		StorageGiBUsed:  100,
+	}, commands.LabResourceProfile{
+		VCPU:    8,
+		RAMMiB:  100,
+		DiskGiB: 100,
+	}, 90)
+
+	if !decision.Approved {
+		t.Fatalf("decision denied: %s", decision.Reason)
+	}
+	if decision.PredictedCPU != 50 {
+		t.Fatalf("predicted cpu = %v, want 50", decision.PredictedCPU)
+	}
+	if decision.PredictedRAM != 10 {
+		t.Fatalf("predicted ram = %v, want 10", decision.PredictedRAM)
+	}
+}
