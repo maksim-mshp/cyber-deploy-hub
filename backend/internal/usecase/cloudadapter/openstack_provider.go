@@ -12,7 +12,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 
 	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/config"
@@ -43,9 +45,6 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	if p.client == nil || !p.client.Configured() {
 		return DeployResult{}, errors.New("openstack credentials are not configured")
 	}
-	if strings.TrimSpace(p.cfg.PrivateNetworkID) == "" {
-		return DeployResult{}, errors.New("CLOUD_PRIVATE_NETWORK_ID is required")
-	}
 	if strings.TrimSpace(p.cfg.PrivateSubnetID) == "" {
 		return DeployResult{}, errors.New("CLOUD_PRIVATE_SUBNET_ID is required")
 	}
@@ -59,6 +58,13 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	}
 
 	result := DeployResult{KeyPairName: keyPairName(req.LabRunID)}
+	labNetwork, err := p.ensureLabNetwork(deployCtx, services.Network, req)
+	result.NetworkID = labNetwork.NetworkID
+	result.SubnetID = labNetwork.SubnetID
+	if err != nil {
+		return result, &DeployError{Result: result, Err: fmt.Errorf("create lab network: %w", err)}
+	}
+
 	keyPair, err := createKeyPair(deployCtx, services.Compute, result.KeyPairName)
 	if err != nil {
 		return result, &DeployError{Result: result, Err: fmt.Errorf("create keypair: %w", err)}
@@ -69,7 +75,7 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	result.PrivateKey = []byte(keyPair.PrivateKey)
 
 	for _, blueprint := range req.Instances {
-		instance, err := p.deployInstance(deployCtx, services, req, blueprint, result.KeyPairName)
+		instance, err := p.deployInstance(deployCtx, services, req, blueprint, result.KeyPairName, labNetwork)
 		result.Instances = appendOrReplaceInstance(result.Instances, instance)
 		if err != nil {
 			return result, &DeployError{Result: result, Err: err}
@@ -128,10 +134,117 @@ func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) 
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete keypair %s: %w", deployment.KeyPairName, err))
 		}
 	}
+	if deployment.SubnetID != "" {
+		if err := deleteSubnet(cleanupCtx, services.Network, deployment.SubnetID); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete subnet %s: %w", deployment.SubnetID, err))
+		}
+	}
+	if deployment.NetworkID != "" {
+		if err := deleteNetwork(cleanupCtx, services.Network, deployment.NetworkID); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete network %s: %w", deployment.NetworkID, err))
+		}
+	}
 	return cleanupErr
 }
 
-func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openstack.ServiceClients, req DeployRequest, blueprint commands.VMBlueprint, keyName string) (Instance, error) {
+type labNetwork struct {
+	NetworkID string
+	SubnetID  string
+}
+
+func (p *OpenStackProvider) ensureLabNetwork(ctx context.Context, network *gophercloud.ServiceClient, req DeployRequest) (labNetwork, error) {
+	template, err := subnets.Get(ctx, network, p.cfg.PrivateSubnetID).Extract()
+	if err != nil {
+		return labNetwork{}, fmt.Errorf("load template subnet %s: %w", p.cfg.PrivateSubnetID, err)
+	}
+	if template == nil || strings.TrimSpace(template.CIDR) == "" {
+		return labNetwork{}, fmt.Errorf("template subnet %s has empty CIDR", p.cfg.PrivateSubnetID)
+	}
+
+	networkName := resourceName(req.LabRunID, "lab", "net")
+	createdNetwork, err := findNetworkByName(ctx, network, networkName)
+	if err != nil {
+		return labNetwork{}, err
+	}
+	if createdNetwork == nil {
+		adminUp := true
+		createdNetwork, err = networks.Create(ctx, network, networks.CreateOpts{
+			Name:         networkName,
+			Description:  "cyber-deploy-hub lab network " + req.LabRunID,
+			AdminStateUp: &adminUp,
+		}).Extract()
+		if err != nil {
+			return labNetwork{}, err
+		}
+	}
+
+	subnetName := resourceName(req.LabRunID, "lab", "subnet")
+	createdSubnet, err := findSubnetByName(ctx, network, createdNetwork.ID, subnetName)
+	if err != nil {
+		return labNetwork{}, err
+	}
+	if createdSubnet == nil {
+		enableDHCP := template.EnableDHCP
+		gatewayIP := template.GatewayIP
+		ipVersion := gophercloud.IPVersion(template.IPVersion)
+		if ipVersion == 0 {
+			ipVersion = gophercloud.IPv4
+		}
+		createdSubnet, err = subnets.Create(ctx, network, subnets.CreateOpts{
+			NetworkID:       createdNetwork.ID,
+			Name:            subnetName,
+			Description:     "cyber-deploy-hub lab subnet " + req.LabRunID,
+			CIDR:            template.CIDR,
+			IPVersion:       ipVersion,
+			GatewayIP:       &gatewayIP,
+			EnableDHCP:      &enableDHCP,
+			DNSNameservers:  append([]string(nil), template.DNSNameservers...),
+			AllocationPools: append([]subnets.AllocationPool(nil), template.AllocationPools...),
+			HostRoutes:      append([]subnets.HostRoute(nil), template.HostRoutes...),
+		}).Extract()
+		if err != nil {
+			return labNetwork{NetworkID: createdNetwork.ID}, err
+		}
+	}
+
+	return labNetwork{NetworkID: createdNetwork.ID, SubnetID: createdSubnet.ID}, nil
+}
+
+func findNetworkByName(ctx context.Context, network *gophercloud.ServiceClient, name string) (*networks.Network, error) {
+	page, err := networks.List(network, networks.ListOpts{Name: name}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list networks by name %s: %w", name, err)
+	}
+	items, err := networks.ExtractNetworks(page)
+	if err != nil {
+		return nil, fmt.Errorf("extract networks by name %s: %w", name, err)
+	}
+	for i := range items {
+		if items[i].Name == name {
+			return &items[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func findSubnetByName(ctx context.Context, network *gophercloud.ServiceClient, networkID string, name string) (*subnets.Subnet, error) {
+	page, err := subnets.List(network, subnets.ListOpts{NetworkID: networkID, Name: name}).AllPages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list subnets by name %s: %w", name, err)
+	}
+	items, err := subnets.ExtractSubnets(page)
+	if err != nil {
+		return nil, fmt.Errorf("extract subnets by name %s: %w", name, err)
+	}
+	for i := range items {
+		if items[i].Name == name && items[i].NetworkID == networkID {
+			return &items[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openstack.ServiceClients, req DeployRequest, blueprint commands.VMBlueprint, keyName string, labNetwork labNetwork) (Instance, error) {
 	instance := Instance{
 		Name:     blueprint.Name,
 		ImageID:  blueprint.ImageID,
@@ -142,7 +255,7 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 	}
 
 	if blueprint.FixedIP != "" {
-		occupied, err := p.fixedIPOccupied(ctx, services.Network, blueprint.FixedIP)
+		occupied, err := fixedIPOccupied(ctx, services.Network, labNetwork.NetworkID, blueprint.FixedIP)
 		if err != nil {
 			return instance, fmt.Errorf("check fixed ip %s: %w", blueprint.FixedIP, err)
 		}
@@ -151,7 +264,7 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 		}
 	}
 
-	port, err := p.createPort(ctx, services.Network, req, blueprint)
+	port, err := p.createPort(ctx, services.Network, req, blueprint, labNetwork)
 	if err != nil {
 		return instance, fmt.Errorf("create port for %s: %w", blueprint.Name, err)
 	}
@@ -176,9 +289,9 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 	return instance, nil
 }
 
-func (p *OpenStackProvider) fixedIPOccupied(ctx context.Context, network *gophercloud.ServiceClient, fixedIP string) (bool, error) {
+func fixedIPOccupied(ctx context.Context, network *gophercloud.ServiceClient, networkID string, fixedIP string) (bool, error) {
 	page, err := ports.List(network, ports.ListOpts{
-		NetworkID: p.cfg.PrivateNetworkID,
+		NetworkID: networkID,
 		FixedIPs:  []ports.FixedIPOpts{{IPAddress: fixedIP}},
 	}).AllPages(ctx)
 	if err != nil {
@@ -191,15 +304,15 @@ func (p *OpenStackProvider) fixedIPOccupied(ctx context.Context, network *gopher
 	return len(existing) > 0, nil
 }
 
-func (p *OpenStackProvider) createPort(ctx context.Context, network *gophercloud.ServiceClient, req DeployRequest, blueprint commands.VMBlueprint) (*ports.Port, error) {
+func (p *OpenStackProvider) createPort(ctx context.Context, network *gophercloud.ServiceClient, req DeployRequest, blueprint commands.VMBlueprint, labNetwork labNetwork) (*ports.Port, error) {
 	adminUp := true
 	opts := ports.CreateOpts{
-		NetworkID:    p.cfg.PrivateNetworkID,
+		NetworkID:    labNetwork.NetworkID,
 		Name:         resourceName(req.LabRunID, blueprint.Name, "port"),
 		AdminStateUp: &adminUp,
 	}
 	if blueprint.FixedIP != "" {
-		opts.FixedIPs = []ports.IP{{SubnetID: p.cfg.PrivateSubnetID, IPAddress: blueprint.FixedIP}}
+		opts.FixedIPs = []ports.IP{{SubnetID: labNetwork.SubnetID, IPAddress: blueprint.FixedIP}}
 	}
 	if len(p.securityGroupIDs) > 0 {
 		groups := append([]string(nil), p.securityGroupIDs...)
@@ -304,6 +417,20 @@ func deleteVolume(ctx context.Context, block *gophercloud.ServiceClient, volumeI
 
 func deletePort(ctx context.Context, network *gophercloud.ServiceClient, portID string) error {
 	if err := ports.Delete(ctx, network, portID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return nil
+}
+
+func deleteSubnet(ctx context.Context, network *gophercloud.ServiceClient, subnetID string) error {
+	if err := subnets.Delete(ctx, network, subnetID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return nil
+}
+
+func deleteNetwork(ctx context.Context, network *gophercloud.ServiceClient, networkID string) error {
+	if err := networks.Delete(ctx, network, networkID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
 		return err
 	}
 	return nil

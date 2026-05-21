@@ -12,6 +12,8 @@ type Deployment struct {
 	LabRunID             string
 	ProjectID            string
 	State                string
+	NetworkID            string
+	SubnetID             string
 	KeyPairName          string
 	PrivateKeyCiphertext []byte
 	PrivateKeyNonce      []byte
@@ -40,6 +42,8 @@ type DeployRequest struct {
 type DeployResult struct {
 	KeyPairName string
 	PrivateKey  []byte
+	NetworkID   string
+	SubnetID    string
 	Instances   []Instance
 }
 

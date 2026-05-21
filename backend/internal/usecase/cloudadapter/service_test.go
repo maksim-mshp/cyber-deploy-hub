@@ -69,6 +69,8 @@ func TestServiceDeployFailurePersistsPartialResources(t *testing.T) {
 	partial := DeployResult{
 		KeyPairName: "cdh-key",
 		PrivateKey:  []byte("private"),
+		NetworkID:   "network-1",
+		SubnetID:    "subnet-1",
 		Instances: []Instance{{
 			Name:     "vm-1",
 			ImageID:  "image-1",
@@ -100,6 +102,9 @@ func TestServiceDeployFailurePersistsPartialResources(t *testing.T) {
 	}
 	if len(repo.failureResult.Instances) != 1 || repo.failureResult.Instances[0].PortID != "port-1" {
 		t.Fatalf("failure partial result = %#v", repo.failureResult)
+	}
+	if repo.failureResult.NetworkID != "network-1" || repo.failureResult.SubnetID != "subnet-1" {
+		t.Fatalf("failure network result = %#v", repo.failureResult)
 	}
 	if repo.event.MessageType != events.CloudDeployFailedV1.String() || repo.event.Error == nil {
 		t.Fatalf("failure event = %#v", repo.event)
