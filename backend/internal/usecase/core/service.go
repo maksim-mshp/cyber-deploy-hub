@@ -65,6 +65,12 @@ func (s *Service) Handle(ctx context.Context, envelope contracts.Envelope) error
 	switch envelope.MessageType {
 	case commands.RequestProvisionV1.String():
 		return s.handleRequestProvision(ctx, envelope)
+	case commands.RequestFreezeV1.String():
+		return s.handleRequestFreeze(ctx, envelope)
+	case commands.RequestVerificationV1.String():
+		return s.handleRequestVerification(ctx, envelope)
+	case commands.RequestCleanupV1.String():
+		return s.handleRequestCleanup(ctx, envelope)
 	case events.ProjectAllocatedV1.String():
 		return s.handleProjectAllocated(ctx, envelope)
 	case events.ProjectAllocationFailedV1.String():
@@ -147,6 +153,105 @@ func (s *Service) handleProjectAllocated(ctx context.Context, envelope contracts
 		StepName:  "project_allocated",
 		Message:   envelope,
 		Next:      []contracts.Envelope{next},
+	})
+}
+
+func (s *Service) handleRequestFreeze(ctx context.Context, envelope contracts.Envelope) error {
+	var payload commands.LabRunCommandPayload
+	if err := decodePayload(envelope, &payload); err != nil {
+		return err
+	}
+	if payload.LabRunID == "" {
+		return fmt.Errorf("freeze command does not include lab_run_id")
+	}
+	next, err := s.newCommand(envelope, commands.LifecycleFreezeLabV1, commands.LifecycleFreezeLabV1Payload{
+		LabRunID: payload.LabRunID,
+		Reason:   payload.Reason,
+	})
+	if err != nil {
+		return err
+	}
+	return s.repo.Advance(ctx, Transition{
+		LabRunID: payload.LabRunID,
+		State:    domain.LabRunFrozen,
+		StepName: "request_freeze",
+		Message:  envelope,
+		Next:     []contracts.Envelope{next},
+	})
+}
+
+func (s *Service) handleRequestCleanup(ctx context.Context, envelope contracts.Envelope) error {
+	var payload commands.LabRunCommandPayload
+	if err := decodePayload(envelope, &payload); err != nil {
+		return err
+	}
+	if payload.LabRunID == "" {
+		return fmt.Errorf("cleanup command does not include lab_run_id")
+	}
+	labRun, err := s.repo.LoadLabRun(ctx, payload.LabRunID)
+	if err != nil {
+		return err
+	}
+	reason := payload.Reason
+	if reason == "" {
+		reason = "manual_cleanup"
+	}
+	revoke, err := s.newCommand(envelope, commands.VDIRevokeAccessV1, commands.VDIRevokeAccessV1Payload{
+		LabRunID: payload.LabRunID,
+		Reason:   reason,
+	})
+	if err != nil {
+		return err
+	}
+	cleanup, err := s.newCommand(envelope, commands.CloudCleanupLabV1, commands.CloudCleanupLabV1Payload{
+		LabRunID:  payload.LabRunID,
+		ProjectID: labRun.ProjectID,
+		Reason:    reason,
+	})
+	if err != nil {
+		return err
+	}
+	cancelTimer, err := s.newCommand(envelope, commands.LifecycleCancelTimerV1, commands.LifecycleCancelTimerV1Payload{
+		LabRunID: payload.LabRunID,
+		Reason:   reason,
+	})
+	if err != nil {
+		return err
+	}
+	return s.repo.Advance(ctx, Transition{
+		LabRunID: payload.LabRunID,
+		State:    domain.LabRunCleaning,
+		StepName: "request_cleanup",
+		Message:  envelope,
+		Next:     []contracts.Envelope{revoke, cleanup, cancelTimer},
+	})
+}
+
+func (s *Service) handleRequestVerification(ctx context.Context, envelope contracts.Envelope) error {
+	var payload commands.LabRunCommandPayload
+	if err := decodePayload(envelope, &payload); err != nil {
+		return err
+	}
+	if payload.LabRunID == "" {
+		return fmt.Errorf("verification command does not include lab_run_id")
+	}
+	profileID := payload.Reason
+	if profileID == "" {
+		profileID = "default"
+	}
+	next, err := s.newCommand(envelope, commands.CheckerRunV1, commands.CheckerRunV1Payload{
+		LabRunID:  payload.LabRunID,
+		ProfileID: profileID,
+	})
+	if err != nil {
+		return err
+	}
+	return s.repo.Advance(ctx, Transition{
+		LabRunID: payload.LabRunID,
+		State:    domain.LabRunVerifying,
+		StepName: "request_verification",
+		Message:  envelope,
+		Next:     []contracts.Envelope{next},
 	})
 }
 
@@ -482,7 +587,7 @@ func (s *Service) newCommand(cause contracts.Envelope, subject contracts.Subject
 		SagaID:         cause.SagaID,
 		AggregateType:  aggregateTypeLabRun,
 		AggregateID:    cause.AggregateID,
-		IdempotencyKey: cause.SagaID + ":" + subject.String(),
+		IdempotencyKey: idempotencyKey(cause, subject),
 		Payload:        payload,
 	})
 }
@@ -497,9 +602,16 @@ func (s *Service) newEvent(cause contracts.Envelope, subject contracts.Subject, 
 		SagaID:         cause.SagaID,
 		AggregateType:  aggregateTypeLabRun,
 		AggregateID:    cause.AggregateID,
-		IdempotencyKey: cause.SagaID + ":" + subject.String(),
+		IdempotencyKey: idempotencyKey(cause, subject),
 		Payload:        payload,
 	})
+}
+
+func idempotencyKey(cause contracts.Envelope, subject contracts.Subject) string {
+	if cause.SagaID != "" {
+		return cause.SagaID + ":" + subject.String()
+	}
+	return cause.AggregateID + ":" + cause.MessageID + ":" + subject.String()
 }
 
 func (s *Service) failureEvent(cause contracts.Envelope, labRunID string, code string, message string) (contracts.Envelope, error) {

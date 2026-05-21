@@ -99,18 +99,20 @@ WHERE id = $1`,
 			return fmt.Errorf("lab_run %s not found", transition.LabRunID)
 		}
 
-		if _, err := tx.Exec(ctx, `
+		if transition.Message.SagaID != "" {
+			if _, err := tx.Exec(ctx, `
 UPDATE core.saga_instances
 SET state = $2,
     updated_at = now()
 WHERE id = $1`,
-			transition.Message.SagaID, string(transition.State)); err != nil {
-			return err
-		}
-
-		if transition.StepName != "" {
-			if err := insertStep(ctx, tx, transition.Message.SagaID, transition.StepName, "DONE", transition.Message.MessageID, ""); err != nil {
+				transition.Message.SagaID, string(transition.State)); err != nil {
 				return err
+			}
+
+			if transition.StepName != "" {
+				if err := insertStep(ctx, tx, transition.Message.SagaID, transition.StepName, "DONE", transition.Message.MessageID, ""); err != nil {
+					return err
+				}
 			}
 		}
 		if err := insertLabRunEvent(ctx, tx, transition.LabRunID, transition.State, transition.Message); err != nil {
@@ -142,18 +144,20 @@ WHERE id = $1`,
 			return fmt.Errorf("lab_run %s not found", failure.LabRunID)
 		}
 
-		if _, err := tx.Exec(ctx, `
+		if failure.Event.SagaID != "" {
+			if _, err := tx.Exec(ctx, `
 UPDATE core.saga_instances
 SET state = $2,
     updated_at = now()
 WHERE id = $1`,
-			failure.Event.SagaID, string(domain.LabRunFailed)); err != nil {
-			return err
-		}
-
-		if failure.StepName != "" {
-			if err := insertStep(ctx, tx, failure.Event.SagaID, failure.StepName, "FAILED", failure.Event.MessageID, failure.Message); err != nil {
+				failure.Event.SagaID, string(domain.LabRunFailed)); err != nil {
 				return err
+			}
+
+			if failure.StepName != "" {
+				if err := insertStep(ctx, tx, failure.Event.SagaID, failure.StepName, "FAILED", failure.Event.MessageID, failure.Message); err != nil {
+					return err
+				}
 			}
 		}
 		if err := insertLabRunEvent(ctx, tx, failure.LabRunID, domain.LabRunFailed, failure.Event); err != nil {
