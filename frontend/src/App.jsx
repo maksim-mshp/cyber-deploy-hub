@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -75,9 +75,27 @@ const statusFlow = [
   'DEPLOYING',
   'ISSUING_VDI_ACCESS',
   'READY',
+  'VERIFYING',
+  'VERIFIED',
+  'VERIFICATION_FAILED',
   'FROZEN',
   'CLEANING',
   'FAILED',
+]
+
+const initialCheckRuns = [
+  {
+    id: 'demo-check-1',
+    profile_id: 'default',
+    state: 'PASSED',
+    passed: true,
+    finished_at: new Date().toISOString(),
+    results: [
+      { sequence: 1, name: 'SSH package installed', type: 'package_installed', passed: true, exit_code: 0, message: 'passed' },
+      { sequence: 2, name: 'OS release file exists', type: 'file_exists', passed: true, exit_code: 0, message: 'passed' },
+      { sequence: 3, name: 'SSH port listening', type: 'port_open', passed: true, exit_code: 0, message: 'passed' },
+    ],
+  },
 ]
 
 const auditRows = [
@@ -97,6 +115,7 @@ function App() {
   const [labs, setLabs] = useState(initialLabs)
   const [selectedID, setSelectedID] = useState(initialLabs[0].id)
   const [notice, setNotice] = useState('API gateway готов к командам')
+  const [checkRuns, setCheckRuns] = useState(initialCheckRuns)
   const [settings, setSettings] = useState({
     lab_ttl_seconds: 7200,
     freeze_ttl_seconds: 86400,
@@ -107,6 +126,21 @@ function App() {
     () => labs.find((lab) => lab.id === selectedID) ?? labs[0],
     [labs, selectedID],
   )
+
+  const loadCheckRuns = useCallback(async (labRunID) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/labs/${labRunID}/checks?limit=3`)
+      if (!response.ok) {
+        throw new Error(response.statusText)
+      }
+      const payload = await response.json()
+      if (payload.runs?.length) {
+        setCheckRuns(payload.runs)
+      }
+    } catch {
+      setCheckRuns(initialCheckRuns)
+    }
+  }, [])
 
   useEffect(() => {
     if (!selectedID || typeof EventSource === 'undefined') {
@@ -123,12 +157,15 @@ function App() {
             : lab,
         ),
       )
+      if (payload.message_type?.includes('checker') || payload.state?.includes('VERIF')) {
+        loadCheckRuns(selectedID)
+      }
     })
     source.onerror = () => {
       source.close()
     }
     return () => source.close()
-  }, [selectedID])
+  }, [loadCheckRuns, selectedID])
 
   async function sendCommand(path, body = {}) {
     setNotice(`Команда отправляется: ${path}`)
@@ -177,6 +214,18 @@ function App() {
 
   function checkLab() {
     updateLabState(selectedLab.id, 'VERIFYING')
+    setCheckRuns([
+      {
+        id: `pending-${selectedLab.id}`,
+        profile_id: 'default',
+        state: 'RUNNING',
+        passed: false,
+        finished_at: new Date().toISOString(),
+        results: [
+          { sequence: 1, name: 'SSH profile queued', type: 'command_exit_code', passed: true, exit_code: 0, message: 'command accepted' },
+        ],
+      },
+    ])
     sendCommand(`/api/labs/${selectedLab.id}/check`, {
       profile_id: 'default',
       idempotency_key: `check:${selectedLab.id}`,
@@ -255,7 +304,10 @@ function App() {
                   key={lab.id}
                   type="button"
                   className={`lab-row ${lab.id === selectedID ? 'active' : ''}`}
-                  onClick={() => setSelectedID(lab.id)}
+                  onClick={() => {
+                    setSelectedID(lab.id)
+                    loadCheckRuns(lab.id)
+                  }}
                 >
                   <span>
                     <strong>{lab.student}</strong>
@@ -351,6 +403,24 @@ function App() {
             <button type="button" className="primary full" onClick={saveSettings}>
               <CheckCircle2 size={17} /> Применить
             </button>
+          </div>
+
+          <div className="panel checks-panel">
+            <PanelTitle icon={TerminalSquare} title="SSH-проверка" right={<StatusPill state={checkRuns[0]?.state ?? 'PENDING'} />} />
+            <div className="check-meta">
+              <span>Профиль</span>
+              <strong>{checkRuns[0]?.profile_id ?? 'default'}</strong>
+            </div>
+            <div className="check-results">
+              {(checkRuns[0]?.results ?? []).map((result) => (
+                <div key={`${checkRuns[0]?.id}-${result.sequence}`} className={result.passed ? 'passed' : 'failed'}>
+                  <span>{result.sequence}</span>
+                  <strong>{result.name}</strong>
+                  <code>{result.type}</code>
+                  <small>{result.message || `exit ${result.exit_code}`}</small>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

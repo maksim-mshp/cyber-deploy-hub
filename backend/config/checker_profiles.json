@@ -1,0 +1,47 @@
+[
+  {
+    "id": "default",
+    "name": "Linux baseline",
+    "ssh_user": "ubuntu",
+    "steps": [
+      {
+        "name": "SSH package installed",
+        "type": "package_installed",
+        "package": "openssh-server",
+        "timeout_seconds": 15
+      },
+      {
+        "name": "OS release file exists",
+        "type": "file_exists",
+        "path": "/etc/os-release",
+        "timeout_seconds": 10
+      },
+      {
+        "name": "OS release has ID",
+        "type": "file_contains",
+        "path": "/etc/os-release",
+        "contains": "ID=",
+        "timeout_seconds": 10
+      },
+      {
+        "name": "SSH service active",
+        "type": "service_active",
+        "service": "ssh",
+        "timeout_seconds": 15
+      },
+      {
+        "name": "SSH port listening",
+        "type": "port_open",
+        "port": 22,
+        "timeout_seconds": 10
+      },
+      {
+        "name": "Command exit code",
+        "type": "command_exit_code",
+        "command": "test -r /etc/os-release",
+        "expected_exit_code": 0,
+        "timeout_seconds": 10
+      }
+    ]
+  }
+]

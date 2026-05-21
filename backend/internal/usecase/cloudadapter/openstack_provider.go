@@ -142,6 +142,9 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 		return instance, fmt.Errorf("create port for %s: %w", blueprint.Name, err)
 	}
 	instance.PortID = port.ID
+	if instance.FixedIP == "" {
+		instance.FixedIP = firstPortIPAddress(port.FixedIPs)
+	}
 
 	server, err := p.createServer(ctx, services.Compute, req, blueprint, keyName, port.ID)
 	if err != nil {
@@ -297,6 +300,15 @@ func firstAttachedVolumeID(server *servers.Server) string {
 	for _, volume := range server.AttachedVolumes {
 		if volume.ID != "" {
 			return volume.ID
+		}
+	}
+	return ""
+}
+
+func firstPortIPAddress(ips []ports.IP) string {
+	for _, ip := range ips {
+		if ip.IPAddress != "" {
+			return ip.IPAddress
 		}
 	}
 	return ""

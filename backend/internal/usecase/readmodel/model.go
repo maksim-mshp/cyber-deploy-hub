@@ -56,3 +56,33 @@ type ProjectPoolItem struct {
 	CurrentLabRunID     string `json:"current_lab_run_id,omitempty"`
 	ReservedByStudentID string `json:"reserved_by_student_id,omitempty"`
 }
+
+type CheckRunsView struct {
+	Runs []CheckRunView `json:"runs"`
+}
+
+type CheckRunView struct {
+	ID           string                `json:"id"`
+	LabRunID     string                `json:"lab_run_id"`
+	ProfileID    string                `json:"profile_id"`
+	State        string                `json:"state"`
+	Passed       bool                  `json:"passed"`
+	ErrorCode    string                `json:"error_code,omitempty"`
+	ErrorMessage string                `json:"error_message,omitempty"`
+	StartedAt    time.Time             `json:"started_at"`
+	FinishedAt   time.Time             `json:"finished_at"`
+	Results      []CheckStepResultView `json:"results"`
+}
+
+type CheckStepResultView struct {
+	Sequence   int       `json:"sequence"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type"`
+	Passed     bool      `json:"passed"`
+	ExitCode   int       `json:"exit_code"`
+	Message    string    `json:"message,omitempty"`
+	StdoutTail string    `json:"stdout_tail,omitempty"`
+	StderrTail string    `json:"stderr_tail,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+}

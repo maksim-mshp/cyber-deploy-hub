@@ -283,6 +283,34 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  checker-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/checker-service"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      CLOUD_KEY_ENCRYPTION_KEY: ${CLOUD_KEY_ENCRYPTION_KEY:-}
+      CLOUD_KEY_ENCRYPTION_KEY_ID: ${CLOUD_KEY_ENCRYPTION_KEY_ID:-default}
+      CHECKER_PROFILE_FILE: ${CHECKER_PROFILE_FILE:-/app/config/checker_profiles.json}
+      CHECKER_PROFILE_JSON: ${CHECKER_PROFILE_JSON:-}
+      CHECKER_DEFAULT_SSH_USER: ${CHECKER_DEFAULT_SSH_USER:-ubuntu}
+      CHECKER_SSH_PORT: ${CHECKER_SSH_PORT:-22}
+      CHECKER_SSH_TIMEOUT: ${CHECKER_SSH_TIMEOUT:-20s}
+      CHECKER_COMMAND_TIMEOUT: ${CHECKER_COMMAND_TIMEOUT:-15s}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   web:
     build:
       context: ./frontend

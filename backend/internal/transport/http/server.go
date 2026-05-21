@@ -44,6 +44,7 @@ type ReadModel interface {
 	ListAuditEvents(ctx context.Context, limit int) (readmodel.AuditView, error)
 	GetSettings(ctx context.Context) (readmodel.SettingsView, error)
 	GetProjectPool(ctx context.Context) (readmodel.ProjectPoolView, error)
+	ListCheckRuns(ctx context.Context, labRunID string, limit int) (readmodel.CheckRunsView, error)
 }
 
 type Server struct {
@@ -75,6 +76,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/labs/{labRunID}", s.handleGetLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}/vdi", s.handleGetLabVDI)
 	mux.HandleFunc("GET /api/labs/{labRunID}/events", s.handleLabEvents)
+	mux.HandleFunc("GET /api/labs/{labRunID}/checks", s.handleLabChecks)
 	mux.HandleFunc("POST /api/labs/{labRunID}/freeze", s.handleFreezeLab)
 	mux.HandleFunc("POST /api/labs/{labRunID}/check", s.handleCheckLab)
 	mux.HandleFunc("POST /api/labs/{labRunID}/cleanup", s.handleCleanupLab)
@@ -265,6 +267,19 @@ func (s *Server) handleLabEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) handleLabChecks(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	view, err := s.read.ListCheckRuns(r.Context(), r.PathValue("labRunID"), int(parseInt64(r.URL.Query().Get("limit"), 10)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {

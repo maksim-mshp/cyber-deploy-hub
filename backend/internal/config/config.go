@@ -22,6 +22,7 @@ type Config struct {
 	Cloud       CloudConfig
 	VDI         VDIConfig
 	Lifecycle   LifecycleConfig
+	Checker     CheckerConfig
 }
 
 type HTTPConfig struct {
@@ -109,6 +110,15 @@ type LifecycleConfig struct {
 	DefaultLabTTL            time.Duration `env:"LIFECYCLE_DEFAULT_LAB_TTL" envDefault:"2h"`
 	DefaultFreezeTTL         time.Duration `env:"LIFECYCLE_DEFAULT_FREEZE_TTL" envDefault:"24h"`
 	DefaultCapacityThreshold float64       `env:"LIFECYCLE_DEFAULT_CAPACITY_THRESHOLD" envDefault:"90"`
+}
+
+type CheckerConfig struct {
+	ProfileFile           string        `env:"CHECKER_PROFILE_FILE" envDefault:"/app/config/checker_profiles.json"`
+	ProfileJSON           string        `env:"CHECKER_PROFILE_JSON"`
+	DefaultSSHUser        string        `env:"CHECKER_DEFAULT_SSH_USER" envDefault:"ubuntu"`
+	SSHPort               int           `env:"CHECKER_SSH_PORT" envDefault:"22"`
+	SSHTimeout            time.Duration `env:"CHECKER_SSH_TIMEOUT" envDefault:"20s"`
+	DefaultCommandTimeout time.Duration `env:"CHECKER_COMMAND_TIMEOUT" envDefault:"15s"`
 }
 
 func (c KIConfig) Configured() bool {

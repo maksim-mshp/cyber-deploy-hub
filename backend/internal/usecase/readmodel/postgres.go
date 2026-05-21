@@ -190,6 +190,97 @@ ORDER BY domain_id, name`)
 	return view, rows.Err()
 }
 
+func (r *PostgresReader) ListCheckRuns(ctx context.Context, labRunID string, limit int) (CheckRunsView, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id::text,
+       lab_run_id::text,
+       profile_id,
+       state,
+       COALESCE(passed, false),
+       COALESCE(error_code, ''),
+       COALESCE(error_message, ''),
+       started_at,
+       finished_at
+FROM checker.runs
+WHERE lab_run_id = $1
+ORDER BY finished_at DESC
+LIMIT $2`, labRunID, limit)
+	if err != nil {
+		return CheckRunsView{}, err
+	}
+	defer rows.Close()
+
+	view := CheckRunsView{}
+	for rows.Next() {
+		var run CheckRunView
+		if err := rows.Scan(
+			&run.ID,
+			&run.LabRunID,
+			&run.ProfileID,
+			&run.State,
+			&run.Passed,
+			&run.ErrorCode,
+			&run.ErrorMessage,
+			&run.StartedAt,
+			&run.FinishedAt,
+		); err != nil {
+			return CheckRunsView{}, err
+		}
+		results, err := r.listCheckStepResults(ctx, run.ID)
+		if err != nil {
+			return CheckRunsView{}, err
+		}
+		run.Results = results
+		view.Runs = append(view.Runs, run)
+	}
+	return view, rows.Err()
+}
+
+func (r *PostgresReader) listCheckStepResults(ctx context.Context, runID string) ([]CheckStepResultView, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT sequence,
+       name,
+       type,
+       passed,
+       exit_code,
+       COALESCE(message, ''),
+       COALESCE(stdout_tail, ''),
+       COALESCE(stderr_tail, ''),
+       started_at,
+       finished_at
+FROM checker.step_results
+WHERE run_id = $1
+ORDER BY sequence`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := []CheckStepResultView{}
+	for rows.Next() {
+		var result CheckStepResultView
+		if err := rows.Scan(
+			&result.Sequence,
+			&result.Name,
+			&result.Type,
+			&result.Passed,
+			&result.ExitCode,
+			&result.Message,
+			&result.StdoutTail,
+			&result.StderrTail,
+			&result.StartedAt,
+			&result.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, rows.Err()
+}
+
 func scanEvents(rows pgx.Rows) ([]LabRunEvent, error) {
 	events := []LabRunEvent{}
 	for rows.Next() {

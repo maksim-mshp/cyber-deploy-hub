@@ -62,6 +62,30 @@ func (e *AESGCMEncryptor) Encrypt(plaintext []byte) (EncryptedSecret, error) {
 	}, nil
 }
 
+func (e *AESGCMEncryptor) Decrypt(secret EncryptedSecret) ([]byte, error) {
+	if err := e.Ready(); err != nil {
+		return nil, err
+	}
+	if len(secret.Ciphertext) == 0 {
+		return nil, errors.New("ciphertext is empty")
+	}
+	if len(secret.Nonce) == 0 {
+		return nil, errors.New("nonce is empty")
+	}
+	if secret.KeyID != "" && e.keyID != "" && secret.KeyID != e.keyID {
+		return nil, errors.New("private key encryption key id mismatch")
+	}
+	block, err := aes.NewCipher(e.key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, secret.Nonce, secret.Ciphertext, nil)
+}
+
 func parseEncryptionKey(value string) ([]byte, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

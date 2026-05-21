@@ -280,7 +280,8 @@ button:disabled {
 }
 
 .status.ready,
-.status.verified {
+.status.verified,
+.status.passed {
   color: #067647;
   background: #dcfae6;
 }
@@ -288,13 +289,15 @@ button:disabled {
 .status.deploying,
 .status.checking_capacity,
 .status.issuing_vdi_access,
-.status.verifying {
+.status.verifying,
+.status.running {
   color: #175cd3;
   background: #dbeafe;
 }
 
 .status.failed,
-.status.verification_failed {
+.status.verification_failed,
+.status.error {
   color: #b42318;
   background: #fee4e2;
 }
@@ -311,7 +314,7 @@ button:disabled {
 
 .flow {
   display: grid;
-  grid-template-columns: repeat(9, minmax(68px, 1fr));
+  grid-template-columns: repeat(12, minmax(68px, 1fr));
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 4px;
@@ -496,6 +499,79 @@ button:disabled {
   gap: 10px;
 }
 
+.checks-panel {
+  display: grid;
+  grid-column: span 2;
+  gap: 14px;
+}
+
+.check-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dfebf7;
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: #667085;
+  background: #f8fbff;
+}
+
+.check-meta strong {
+  color: #00204d;
+}
+
+.check-results {
+  display: grid;
+  gap: 8px;
+}
+
+.check-results > div {
+  display: grid;
+  grid-template-columns: 28px minmax(120px, 1fr) minmax(110px, auto);
+  align-items: center;
+  gap: 8px 10px;
+  border: 1px solid #dfebf7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.check-results > div > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #1a79ff;
+  background: #e9f3ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.check-results > div.failed > span {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+.check-results strong {
+  color: #00204d;
+  font-size: 14px;
+}
+
+.check-results code {
+  justify-self: end;
+  border-radius: 6px;
+  padding: 4px 7px;
+  color: #4f6178;
+  background: #f2f6fb;
+  font-size: 12px;
+}
+
+.check-results small {
+  grid-column: 2 / -1;
+  color: #6d7b90;
+}
+
 .number-field {
   display: grid;
   gap: 6px;
@@ -579,6 +655,19 @@ button:disabled {
   }
 
   .flow {
-    grid-template-columns: repeat(9, 92px);
+    grid-template-columns: repeat(12, 92px);
+  }
+
+  .check-results > div {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .checks-panel {
+    grid-column: auto;
+  }
+
+  .check-results code {
+    grid-column: 2;
+    justify-self: start;
   }
 }
