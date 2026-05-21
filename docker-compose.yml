@@ -311,6 +311,39 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  lms-gateway-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    entrypoint: ["/app/lms-gateway-service"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL:-postgres://cyber:change-me@postgres:5432/cyber_deploy_hub?sslmode=disable}
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-10}
+      NATS_URL: ${NATS_URL:-nats://nats:4222}
+      LMS_HTTP_ADDR: ":8083"
+      LMS_SHARED_SECRET: ${LMS_SHARED_SECRET:-change-me}
+      LMS_ALLOWED_CLOCK_SKEW: ${LMS_ALLOWED_CLOCK_SKEW:-5m}
+      LMS_COURSE_MAP_JSON: ${LMS_COURSE_MAP_JSON:-}
+      LMS_ASSIGNMENT_MAP_JSON: ${LMS_ASSIGNMENT_MAP_JSON:-}
+      LMS_DEFAULT_SOURCE: ${LMS_DEFAULT_SOURCE:-moodle}
+    ports:
+      - "${LMS_GATEWAY_PORT:-8083}:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8083/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   web:
     build:
       context: ./frontend

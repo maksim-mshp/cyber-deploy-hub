@@ -1,0 +1,63 @@
+package lmsgateway
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"cyber-deploy-hub/internal/contracts"
+	"cyber-deploy-hub/internal/contracts/commands"
+)
+
+func TestServiceLaunchPublishesProvisionCommand(t *testing.T) {
+	t.Parallel()
+
+	mapper, err := NewMapper(`{"course-ext":"course-linux"}`, `{"assignment-ext":"LAB-02"}`)
+	if err != nil {
+		t.Fatalf("NewMapper: %v", err)
+	}
+	repo := &fakeRepository{}
+	service, err := NewService("lms-gateway-service", "moodle", mapper, repo)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	result, inserted, err := service.Launch(context.Background(), LaunchRequest{
+		MoodleUserID:       "student-ext",
+		MoodleCourseID:     "course-ext",
+		MoodleAssignmentID: "assignment-ext",
+	})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if !inserted {
+		t.Fatal("launch was not inserted")
+	}
+	if result.Mapping.StudentID != "moodle:student-ext" || result.Mapping.CourseID != "course-linux" || result.Mapping.LabID != "LAB-02" {
+		t.Fatalf("unexpected mapping: %+v", result.Mapping)
+	}
+	if repo.command.MessageType != commands.RequestProvisionV1.String() {
+		t.Fatalf("command = %s", repo.command.MessageType)
+	}
+	var payload commands.RequestProvisionV1Payload
+	if err := json.Unmarshal(repo.command.Payload, &payload); err != nil {
+		t.Fatalf("decode command payload: %v", err)
+	}
+	if payload.StudentID != result.Mapping.StudentID || payload.CourseID != result.Mapping.CourseID || payload.LabID != result.Mapping.LabID {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+type fakeRepository struct {
+	command contracts.Envelope
+}
+
+func (r *fakeRepository) SaveLaunch(_ context.Context, launch LaunchRecord, command contracts.Envelope) (LaunchRecord, bool, error) {
+	r.command = command
+	launch.CreatedAt = command.OccurredAt
+	return launch, true, nil
+}
+
+func (r *fakeRepository) LoadResult(context.Context, string) (LaunchResult, bool, error) {
+	return LaunchResult{}, false, nil
+}

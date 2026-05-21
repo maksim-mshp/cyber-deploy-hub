@@ -20,6 +20,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/vdi-gateway-service ./cmd/vdi-gateway-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/lifecycle-service ./cmd/lifecycle-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/checker-service ./cmd/checker-service
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/lms-gateway-service ./cmd/lms-gateway-service
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 FROM alpine:3.22
@@ -37,6 +38,7 @@ COPY --from=build /out/cloud-adapter-service /app/cloud-adapter-service
 COPY --from=build /out/vdi-gateway-service /app/vdi-gateway-service
 COPY --from=build /out/lifecycle-service /app/lifecycle-service
 COPY --from=build /out/checker-service /app/checker-service
+COPY --from=build /out/lms-gateway-service /app/lms-gateway-service
 COPY --from=build /out/migrate /app/migrate
 COPY config /app/config
 COPY migrations /app/migrations

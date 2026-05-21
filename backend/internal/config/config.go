@@ -23,6 +23,7 @@ type Config struct {
 	VDI         VDIConfig
 	Lifecycle   LifecycleConfig
 	Checker     CheckerConfig
+	LMS         LMSConfig
 }
 
 type HTTPConfig struct {
@@ -119,6 +120,15 @@ type CheckerConfig struct {
 	SSHPort               int           `env:"CHECKER_SSH_PORT" envDefault:"22"`
 	SSHTimeout            time.Duration `env:"CHECKER_SSH_TIMEOUT" envDefault:"20s"`
 	DefaultCommandTimeout time.Duration `env:"CHECKER_COMMAND_TIMEOUT" envDefault:"15s"`
+}
+
+type LMSConfig struct {
+	HTTPAddr          string        `env:"LMS_HTTP_ADDR" envDefault:":8083"`
+	SharedSecret      string        `env:"LMS_SHARED_SECRET" envDefault:"change-me"`
+	AllowedClockSkew  time.Duration `env:"LMS_ALLOWED_CLOCK_SKEW" envDefault:"5m"`
+	CourseMapJSON     string        `env:"LMS_COURSE_MAP_JSON"`
+	AssignmentMapJSON string        `env:"LMS_ASSIGNMENT_MAP_JSON"`
+	DefaultSource     string        `env:"LMS_DEFAULT_SOURCE" envDefault:"moodle"`
 }
 
 func (c KIConfig) Configured() bool {
