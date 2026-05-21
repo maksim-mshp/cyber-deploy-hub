@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS lms_gateway.lms_gateway_launches_student_created_idx;

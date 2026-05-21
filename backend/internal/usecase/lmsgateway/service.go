@@ -102,7 +102,7 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (LaunchAccepted
 		LabRunID:             labRunID,
 		SagaID:               sagaID,
 		CommandID:            command.MessageID,
-		Status:               "ACCEPTED",
+		Status:               LaunchStatusAccepted,
 		RequestPayload:       rawJSON(req),
 	}
 
@@ -110,8 +110,8 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (LaunchAccepted
 	if err != nil {
 		return LaunchAccepted{}, false, err
 	}
-	if !inserted && saved.Status == "ACCEPTED" {
-		saved.Status = "ALREADY_ACCEPTED"
+	if !inserted && saved.Status == LaunchStatusAccepted {
+		saved.Status = LaunchStatusAlreadyAccepted
 	}
 	return saved.Accepted(), inserted, nil
 }

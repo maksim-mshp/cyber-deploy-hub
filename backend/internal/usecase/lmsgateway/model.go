@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+const (
+	LaunchStatusAccepted        = "ACCEPTED"
+	LaunchStatusAlreadyAccepted = "ALREADY_ACCEPTED"
+	LaunchStatusActiveLabExists = "ACTIVE_LAB_EXISTS"
+)
+
 type LaunchRequest struct {
 	MoodleUserID       string `json:"moodle_user_id"`
 	MoodleCourseID     string `json:"moodle_course_id"`

@@ -185,6 +185,7 @@ func (s *Server) redirectURL(result lmsusecase.LaunchAccepted) string {
 	query := parsed.Query()
 	query.Set("lti_launch_id", result.LaunchID)
 	query.Set("lab_run_id", result.LabRunID)
+	query.Set("launch_status", result.Status)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }

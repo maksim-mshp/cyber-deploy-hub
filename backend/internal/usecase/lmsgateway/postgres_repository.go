@@ -31,7 +31,65 @@ func (r *PostgresRepository) SaveLaunch(ctx context.Context, launch LaunchRecord
 		_ = tx.Rollback(ctx)
 	}()
 
-	tag, err := tx.Exec(ctx, `
+	if err := lockStudentLaunch(ctx, tx, launch.LocalStudentID); err != nil {
+		return LaunchRecord{}, false, err
+	}
+
+	existing, found, err := loadLaunchByIdempotencyKey(ctx, tx, launch.IdempotencyKey)
+	if err != nil {
+		return LaunchRecord{}, false, err
+	}
+	if found {
+		if err := tx.Commit(ctx); err != nil {
+			return LaunchRecord{}, false, err
+		}
+		return existing, false, nil
+	}
+
+	blockingLabRunID, found, err := findBlockingLabRunID(ctx, tx, launch.LocalStudentID)
+	if err != nil {
+		return LaunchRecord{}, false, err
+	}
+	if found {
+		launch.LabRunID = blockingLabRunID
+		launch.Status = LaunchStatusActiveLabExists
+		if err := insertLaunch(ctx, tx, launch); err != nil {
+			return LaunchRecord{}, false, err
+		}
+		saved, found, err := loadLaunchByIdempotencyKey(ctx, tx, launch.IdempotencyKey)
+		if err != nil {
+			return LaunchRecord{}, false, err
+		}
+		if !found {
+			return LaunchRecord{}, false, errors.New("launch was not saved")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return LaunchRecord{}, false, err
+		}
+		return saved, false, nil
+	}
+
+	if err := insertLaunch(ctx, tx, launch); err != nil {
+		return LaunchRecord{}, false, err
+	}
+	if err := insertOutbox(ctx, tx, command); err != nil {
+		return LaunchRecord{}, false, err
+	}
+	inserted, found, err := loadLaunchByIdempotencyKey(ctx, tx, launch.IdempotencyKey)
+	if err != nil {
+		return LaunchRecord{}, false, err
+	}
+	if !found {
+		return LaunchRecord{}, false, errors.New("launch was not saved")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LaunchRecord{}, false, err
+	}
+	return inserted, true, nil
+}
+
+func insertLaunch(ctx context.Context, tx pgx.Tx, launch LaunchRecord) error {
+	_, err := tx.Exec(ctx, `
 INSERT INTO lms_gateway.launches (
     id,
     idempotency_key,
@@ -67,30 +125,7 @@ ON CONFLICT (idempotency_key) DO NOTHING`,
 		launch.Status,
 		launch.RequestPayload,
 	)
-	if err != nil {
-		return LaunchRecord{}, false, err
-	}
-	if tag.RowsAffected() == 0 {
-		existing, err := loadLaunchByIdempotencyKey(ctx, tx, launch.IdempotencyKey)
-		if err != nil {
-			return LaunchRecord{}, false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return LaunchRecord{}, false, err
-		}
-		return existing, false, nil
-	}
-	if err := insertOutbox(ctx, tx, command); err != nil {
-		return LaunchRecord{}, false, err
-	}
-	inserted, err := loadLaunchByIdempotencyKey(ctx, tx, launch.IdempotencyKey)
-	if err != nil {
-		return LaunchRecord{}, false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return LaunchRecord{}, false, err
-	}
-	return inserted, true, nil
+	return err
 }
 
 func (r *PostgresRepository) LoadResult(ctx context.Context, launchID string) (LaunchResult, bool, error) {
@@ -142,7 +177,7 @@ WHERE l.id = $1`, launchID).Scan(
 	return result, true, nil
 }
 
-func loadLaunchByIdempotencyKey(ctx context.Context, tx pgx.Tx, key string) (LaunchRecord, error) {
+func loadLaunchByIdempotencyKey(ctx context.Context, tx pgx.Tx, key string) (LaunchRecord, bool, error) {
 	var launch LaunchRecord
 	err := tx.QueryRow(ctx, `
 SELECT id::text,
@@ -180,7 +215,48 @@ WHERE idempotency_key = $1`, key).Scan(
 		&launch.RequestPayload,
 		&launch.CreatedAt,
 	)
-	return launch, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LaunchRecord{}, false, nil
+	}
+	return launch, err == nil, err
+}
+
+func lockStudentLaunch(ctx context.Context, tx pgx.Tx, studentID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, studentID)
+	return err
+}
+
+func findBlockingLabRunID(ctx context.Context, tx pgx.Tx, studentID string) (string, bool, error) {
+	var labRunID string
+	err := tx.QueryRow(ctx, `
+SELECT l.lab_run_id::text
+FROM lms_gateway.launches l
+LEFT JOIN core.lab_runs lr ON lr.id = l.lab_run_id
+WHERE l.local_student_id = $1
+  AND (lr.id IS NULL OR lr.state NOT IN ('FINISHED', 'FAILED'))
+ORDER BY l.created_at DESC
+LIMIT 1`, studentID).Scan(&labRunID)
+	if err == nil {
+		return labRunID, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, err
+	}
+
+	err = tx.QueryRow(ctx, `
+SELECT id::text
+FROM core.lab_runs
+WHERE student_id = $1
+  AND state NOT IN ('FINISHED', 'FAILED')
+ORDER BY updated_at DESC
+LIMIT 1`, studentID).Scan(&labRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return labRunID, true, nil
 }
 
 func insertOutbox(ctx context.Context, tx pgx.Tx, envelope contracts.Envelope) error {
