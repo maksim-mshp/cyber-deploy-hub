@@ -14,6 +14,7 @@ import (
 	"cyber-deploy-hub/internal/outbox"
 	httpapi "cyber-deploy-hub/internal/transport/http"
 	natsbus "cyber-deploy-hub/internal/transport/nats"
+	"cyber-deploy-hub/internal/usecase/authn"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
 	"cyber-deploy-hub/internal/usecase/readmodel"
@@ -70,6 +71,16 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	labService := labs.NewService(serviceName, bus, outboxStore)
 	settingsService := settings.NewService(serviceName, bus, outboxStore)
+	authService, err := authn.NewService(authn.Config{
+		SessionSecret:  cfg.Auth.SessionSecret,
+		SessionTTL:     cfg.Auth.SessionTTL,
+		CookieName:     cfg.Auth.CookieName,
+		CookieSecure:   cfg.Auth.CookieSecure,
+		LocalUsersJSON: cfg.Auth.LocalUsersJSON,
+	})
+	if err != nil {
+		return err
+	}
 	readiness := readinessChecker{db: db, bus: bus}
 	cloud := openstack.NewClient(cfg.OpenStack)
 
@@ -83,7 +94,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		go dispatcher.Run(dispatcherCtx)
 	}
 
-	server := httpapi.NewServer(labService, settingsService, catalogService, reader, readiness, cloud, logger)
+	server := httpapi.NewServer(labService, settingsService, catalogService, reader, authService, readiness, cloud, logger)
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           server.Routes(),

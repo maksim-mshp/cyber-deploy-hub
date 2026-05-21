@@ -12,6 +12,8 @@ import (
 	"cyber-deploy-hub/internal/config"
 	"cyber-deploy-hub/internal/outbox"
 	natsbus "cyber-deploy-hub/internal/transport/nats"
+	"cyber-deploy-hub/internal/usecase/authn"
+	"cyber-deploy-hub/internal/usecase/labcatalog"
 	lmsusecase "cyber-deploy-hub/internal/usecase/lmsgateway"
 )
 
@@ -48,6 +50,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	catalogRepo, err := labcatalog.NewPostgresRepository(db)
+	if err != nil {
+		return err
+	}
+	catalogService, err := labcatalog.NewService(catalogRepo)
+	if err != nil {
+		return err
+	}
 	mapper, err := lmsusecase.NewMapper(cfg.LMS.CourseMapJSON, cfg.LMS.AssignmentMapJSON)
 	if err != nil {
 		return err
@@ -56,7 +66,17 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	service, err := lmsusecase.NewService(serviceName, cfg.LMS.DefaultSource, mapper, repo)
+	sessionAuth, err := authn.NewService(authn.Config{
+		SessionSecret:  cfg.Auth.SessionSecret,
+		SessionTTL:     cfg.Auth.SessionTTL,
+		CookieName:     cfg.Auth.CookieName,
+		CookieSecure:   cfg.Auth.CookieSecure,
+		LocalUsersJSON: cfg.Auth.LocalUsersJSON,
+	})
+	if err != nil {
+		return err
+	}
+	service, err := lmsusecase.NewService(serviceName, cfg.LMS.DefaultSource, mapper, repo, catalogService)
 	if err != nil {
 		return err
 	}
@@ -69,7 +89,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	})
 	go dispatcher.Run(dispatcherCtx)
 
-	server := NewServer(service, authenticator, readinessChecker{db: db, bus: bus}, logger)
+	server := NewServer(service, authenticator, sessionAuth, cfg.Auth.FrontendURL, readinessChecker{db: db, bus: bus}, logger)
 	httpServer := &http.Server{
 		Addr:              cfg.LMS.HTTPAddr,
 		Handler:           server.Routes(),

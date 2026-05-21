@@ -24,6 +24,7 @@ type Config struct {
 	Lifecycle   LifecycleConfig
 	Checker     CheckerConfig
 	LMS         LMSConfig
+	Auth        AuthConfig
 }
 
 type HTTPConfig struct {
@@ -120,11 +121,20 @@ type CheckerConfig struct {
 
 type LMSConfig struct {
 	HTTPAddr          string        `env:"LMS_HTTP_ADDR" envDefault:":8083"`
-	SharedSecret      string        `env:"LMS_SHARED_SECRET" envDefault:"change-me"`
+	SharedSecret      string        `env:"LMS_SHARED_SECRET"`
 	AllowedClockSkew  time.Duration `env:"LMS_ALLOWED_CLOCK_SKEW" envDefault:"5m"`
 	CourseMapJSON     string        `env:"LMS_COURSE_MAP_JSON"`
 	AssignmentMapJSON string        `env:"LMS_ASSIGNMENT_MAP_JSON"`
 	DefaultSource     string        `env:"LMS_DEFAULT_SOURCE" envDefault:"moodle"`
+}
+
+type AuthConfig struct {
+	SessionSecret  string        `env:"AUTH_SESSION_SECRET"`
+	SessionTTL     time.Duration `env:"AUTH_SESSION_TTL" envDefault:"8h"`
+	CookieName     string        `env:"AUTH_COOKIE_NAME" envDefault:"cdh_session"`
+	CookieSecure   bool          `env:"AUTH_COOKIE_SECURE" envDefault:"false"`
+	FrontendURL    string        `env:"AUTH_FRONTEND_URL" envDefault:"/"`
+	LocalUsersJSON string        `env:"AUTH_LOCAL_USERS_JSON"`
 }
 
 func (c KIConfig) Configured() bool {

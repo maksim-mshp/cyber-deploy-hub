@@ -14,6 +14,7 @@ import (
 
 	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/contracts/commands"
+	"cyber-deploy-hub/internal/usecase/authn"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
 	"cyber-deploy-hub/internal/usecase/readmodel"
@@ -50,6 +51,8 @@ type OpenStackChecker interface {
 
 type ReadModel interface {
 	ListLabRuns(ctx context.Context, limit int) (readmodel.LabRunsView, error)
+	ListLabRunsByStudent(ctx context.Context, studentID string, limit int) (readmodel.LabRunsView, error)
+	HasActiveLabRun(ctx context.Context, studentID string) (bool, error)
 	GetLabRun(ctx context.Context, labRunID string) (readmodel.LabRunView, bool, error)
 	GetVDIAccess(ctx context.Context, labRunID string) (readmodel.VDIAccessView, bool, error)
 	ListLabInstances(ctx context.Context, labRunID string) (readmodel.LabInstancesView, bool, error)
@@ -65,17 +68,19 @@ type Server struct {
 	settings  SettingsUsecase
 	catalog   LabCatalogUsecase
 	read      ReadModel
+	auth      *authn.Service
 	ready     ReadinessChecker
 	openstack OpenStackChecker
 	logger    *slog.Logger
 }
 
-func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog LabCatalogUsecase, read ReadModel, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
+func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog LabCatalogUsecase, read ReadModel, authService *authn.Service, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
 	return &Server{
 		labs:      labUsecase,
 		settings:  settingsUsecase,
 		catalog:   catalog,
 		read:      read,
+		auth:      authService,
 		ready:     ready,
 		openstack: openstack,
 		logger:    logger,
@@ -86,6 +91,9 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("GET /api/admin/openstack/ping", s.handleOpenStackPing)
 	mux.HandleFunc("GET /api/teacher/openstack/images", s.handleListOpenStackImages)
 	mux.HandleFunc("GET /api/teacher/openstack/flavors", s.handleListOpenStackFlavors)
@@ -106,7 +114,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/project-pool", s.handleProjectPool)
 	mux.HandleFunc("GET /api/teacher/lab-definitions", s.handleListTeacherLabDefinitions)
 	mux.HandleFunc("POST /api/teacher/lab-definitions", s.handleUpdateTeacherLabDefinition)
-	return s.withRequestLog(mux)
+	return s.withRequestLog(s.withAuth(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +130,49 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": principal})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication is not configured")
+		return
+	}
+	var req authn.LoginRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, err := s.auth.Login(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", err.Error())
+		return
+	}
+	http.SetCookie(w, s.sessionCookie(result.Token, result.ExpiresAt))
+	writeJSON(w, http.StatusOK, map[string]any{"user": result.User, "expires_at": result.ExpiresAt})
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, _ *http.Request) {
+	if s.auth != nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     s.auth.CookieName(),
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   s.auth.CookieSecure(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleOpenStackPing(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +240,14 @@ func (s *Server) handleRequestLab(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		if s.auth != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+			return
+		}
+		principal = authn.Principal{Subject: strings.TrimSpace(req.StudentID), Role: authn.RoleStudent}
+	}
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
 		return
@@ -198,16 +257,43 @@ func (s *Server) handleRequestLab(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "lab_catalog_failed", err.Error())
 		return
 	}
-	if !found || !definition.Enabled {
+	if !found || (principal.Role == authn.RoleStudent && !definition.Enabled) {
 		writeError(w, http.StatusNotFound, "lab_not_available", "Lab definition is not available")
 		return
 	}
 
+	studentID := principal.Subject
+	source := "student-ui"
+	if principal.Role == authn.RoleTeacher {
+		studentID = strings.TrimSpace(req.StudentID)
+		if studentID == "" {
+			studentID = "teacher:" + principal.Subject
+		}
+		source = "teacher-ui"
+	} else if s.auth != nil {
+		if s.read == nil {
+			writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+			return
+		}
+		active, err := s.read.HasActiveLabRun(r.Context(), principal.Subject)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+			return
+		}
+		if active {
+			writeError(w, http.StatusConflict, "active_lab_exists", "Finish the active lab before starting another one")
+			return
+		}
+	}
+	if principal.Role == authn.RoleTeacher && strings.TrimSpace(req.Source) != "" {
+		source = strings.TrimSpace(req.Source)
+	}
+
 	result, err := s.labs.RequestProvision(r.Context(), labs.RequestProvision{
-		StudentID:      req.StudentID,
+		StudentID:      studentID,
 		CourseID:       definition.CourseID,
 		LabID:          definition.LabID,
-		Source:         req.Source,
+		Source:         source,
 		Resources:      definition.Resources,
 		Instances:      definition.Instances,
 		IdempotencyKey: req.IdempotencyKey,
@@ -226,7 +312,15 @@ func (s *Server) handleListLabs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := int(parseInt64(r.URL.Query().Get("limit"), 50))
-	view, err := s.read.ListLabRuns(r.Context(), limit)
+	var (
+		view readmodel.LabRunsView
+		err  error
+	)
+	if principal, ok := principalFromContext(r.Context()); ok && principal.Role == authn.RoleStudent {
+		view, err = s.read.ListLabRunsByStudent(r.Context(), principal.Subject, limit)
+	} else {
+		view, err = s.read.ListLabRuns(r.Context(), limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
 		return
@@ -248,12 +342,18 @@ func (s *Server) handleGetLab(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lab_not_found", "Lab run was not found")
 		return
 	}
+	if !authorizeLabView(w, r, view) {
+		return
+	}
 	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleGetLabVDI(w http.ResponseWriter, r *http.Request) {
 	if s.read == nil {
 		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	if !s.authorizeLabRunID(w, r, r.PathValue("labRunID")) {
 		return
 	}
 	view, found, err := s.read.GetVDIAccess(r.Context(), r.PathValue("labRunID"))
@@ -273,6 +373,9 @@ func (s *Server) handleLabInstances(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
 		return
 	}
+	if !s.authorizeLabRunID(w, r, r.PathValue("labRunID")) {
+		return
+	}
 	view, found, err := s.read.ListLabInstances(r.Context(), r.PathValue("labRunID"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
@@ -286,6 +389,9 @@ func (s *Server) handleLabInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFreezeLab(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeTeacherOrOwner(w, r, r.PathValue("labRunID")) {
+		return
+	}
 	var req labActionRequest
 	if err := readJSON(r, &req); err != nil && !errors.Is(err, errEmptyBody) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -304,6 +410,9 @@ func (s *Server) handleFreezeLab(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCheckLab(w http.ResponseWriter, r *http.Request) {
+	if !s.requireTeacher(w, r) {
+		return
+	}
 	var req checkLabRequest
 	if err := readJSON(r, &req); err != nil && !errors.Is(err, errEmptyBody) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -322,6 +431,9 @@ func (s *Server) handleCheckLab(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCleanupLab(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeTeacherOrOwner(w, r, r.PathValue("labRunID")) {
+		return
+	}
 	var req labActionRequest
 	if err := readJSON(r, &req); err != nil && !errors.Is(err, errEmptyBody) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -342,6 +454,9 @@ func (s *Server) handleCleanupLab(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLabEvents(w http.ResponseWriter, r *http.Request) {
 	if s.read == nil {
 		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	if !s.authorizeLabRunID(w, r, r.PathValue("labRunID")) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -383,6 +498,9 @@ func (s *Server) handleLabEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLabChecks(w http.ResponseWriter, r *http.Request) {
 	if s.read == nil {
 		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	if !s.authorizeLabRunID(w, r, r.PathValue("labRunID")) {
 		return
 	}
 	view, err := s.read.ListCheckRuns(r.Context(), r.PathValue("labRunID"), int(parseInt64(r.URL.Query().Get("limit"), 10)))
@@ -427,7 +545,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.settings.Update(r.Context(), settings.UpdateRequest{
-		ChangedBy:      req.ChangedBy,
+		ChangedBy:      changedBy(r, req.ChangedBy),
 		Values:         req.Values,
 		IdempotencyKey: req.IdempotencyKey,
 	})
@@ -475,7 +593,7 @@ func (s *Server) handleUpdateTeacherLabDefinition(w http.ResponseWriter, r *http
 		return
 	}
 	result, err := s.catalog.Update(r.Context(), labcatalog.UpdateRequest{
-		ChangedBy: req.ChangedBy,
+		ChangedBy: changedBy(r, req.ChangedBy),
 		Definition: labcatalog.Definition{
 			CourseID:    req.CourseID,
 			LabID:       req.LabID,
@@ -581,6 +699,153 @@ func parseInt64(value string, fallback int64) int64 {
 		return fallback
 	}
 	return parsed
+}
+
+type principalContextKey struct{}
+
+func (s *Server) withAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.auth == nil || !strings.HasPrefix(r.URL.Path, "/api/") || isPublicAuthPath(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		principal, err := s.authenticateRequest(r)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			return
+		}
+		if requiresTeacherRole(r.URL.Path) && principal.Role != authn.RoleTeacher {
+			writeError(w, http.StatusForbidden, "forbidden", "Teacher role is required")
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) authenticateRequest(r *http.Request) (authn.Principal, error) {
+	if token := bearerToken(r.Header.Get("Authorization")); token != "" {
+		return s.auth.AuthenticateToken(token)
+	}
+	cookie, err := r.Cookie(s.auth.CookieName())
+	if err != nil {
+		return authn.Principal{}, errors.New("Authentication is required")
+	}
+	return s.auth.AuthenticateToken(cookie.Value)
+}
+
+func (s *Server) sessionCookie(token string, expiresAt time.Time) *http.Cookie {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	return &http.Cookie{
+		Name:     s.auth.CookieName(),
+		Value:    token,
+		Path:     "/",
+		Expires:  expiresAt,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.auth.CookieSecure(),
+	}
+}
+
+func isPublicAuthPath(r *http.Request) bool {
+	if r.URL.Path == "/api/auth/login" && r.Method == http.MethodPost {
+		return true
+	}
+	if r.URL.Path == "/api/auth/logout" && r.Method == http.MethodPost {
+		return true
+	}
+	return false
+}
+
+func requiresTeacherRole(path string) bool {
+	return strings.HasPrefix(path, "/api/teacher/") || strings.HasPrefix(path, "/api/admin/")
+}
+
+func principalFromContext(ctx context.Context) (authn.Principal, bool) {
+	principal, ok := ctx.Value(principalContextKey{}).(authn.Principal)
+	return principal, ok
+}
+
+func (s *Server) requireTeacher(w http.ResponseWriter, r *http.Request) bool {
+	if s.auth == nil {
+		return true
+	}
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+		return false
+	}
+	if principal.Role != authn.RoleTeacher {
+		writeError(w, http.StatusForbidden, "forbidden", "Teacher role is required")
+		return false
+	}
+	return true
+}
+
+func (s *Server) authorizeTeacherOrOwner(w http.ResponseWriter, r *http.Request, labRunID string) bool {
+	if s.auth == nil {
+		return true
+	}
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+		return false
+	}
+	if principal.Role == authn.RoleTeacher {
+		return true
+	}
+	return s.authorizeLabRunID(w, r, labRunID)
+}
+
+func (s *Server) authorizeLabRunID(w http.ResponseWriter, r *http.Request, labRunID string) bool {
+	if s.auth == nil {
+		return true
+	}
+	if s.read == nil {
+		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return false
+	}
+	view, found, err := s.read.GetLabRun(r.Context(), labRunID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+		return false
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "lab_not_found", "Lab run was not found")
+		return false
+	}
+	return authorizeLabView(w, r, view)
+}
+
+func authorizeLabView(w http.ResponseWriter, r *http.Request, view readmodel.LabRunView) bool {
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		return true
+	}
+	if principal.Role == authn.RoleTeacher || view.StudentID == principal.Subject {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "forbidden", "Lab run belongs to another user")
+	return false
+}
+
+func changedBy(r *http.Request, fallback string) string {
+	if principal, ok := principalFromContext(r.Context()); ok {
+		return principal.Subject
+	}
+	return fallback
+}
+
+func bearerToken(value string) string {
+	parts := strings.Fields(value)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return parts[1]
 }
 
 func (s *Server) withRequestLog(next http.Handler) http.Handler {

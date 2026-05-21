@@ -9,20 +9,27 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
+	"cyber-deploy-hub/internal/usecase/authn"
 	lmsusecase "cyber-deploy-hub/internal/usecase/lmsgateway"
 )
 
 type Server struct {
-	service *lmsusecase.Service
-	auth    *lmsusecase.Authenticator
-	ready   readinessChecker
-	logger  *slog.Logger
+	service     *lmsusecase.Service
+	auth        *lmsusecase.Authenticator
+	sessionAuth *authn.Service
+	frontendURL string
+	ready       readinessChecker
+	logger      *slog.Logger
 }
 
-func NewServer(service *lmsusecase.Service, auth *lmsusecase.Authenticator, ready readinessChecker, logger *slog.Logger) *Server {
-	return &Server{service: service, auth: auth, ready: ready, logger: logger}
+func NewServer(service *lmsusecase.Service, auth *lmsusecase.Authenticator, sessionAuth *authn.Service, frontendURL string, ready readinessChecker, logger *slog.Logger) *Server {
+	if frontendURL == "" {
+		frontendURL = "/"
+	}
+	return &Server{service: service, auth: auth, sessionAuth: sessionAuth, frontendURL: frontendURL, ready: ready, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -31,6 +38,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /lms/moodle/mapping", s.handleMapping)
 	mux.HandleFunc("POST /lms/moodle/launch", s.handleMoodleLaunch)
+	mux.HandleFunc("POST /lms/moodle/sso", s.handleMoodleSSO)
 	mux.HandleFunc("GET /lms/moodle/launch/{launchID}/result", s.handleMoodleResult)
 	mux.HandleFunc("GET /lti/1p3/tool-configuration", s.handleLTISkeleton)
 	return s.withRequestLog(mux)
@@ -87,6 +95,63 @@ func (s *Server) handleMoodleLaunch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, result)
 }
 
+func (s *Server) handleMoodleSSO(w http.ResponseWriter, r *http.Request) {
+	if s.sessionAuth == nil {
+		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "Authentication is not configured")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	defer func() {
+		_ = r.Body.Close()
+	}()
+	if err := s.auth.Authenticate(r, body); err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+		return
+	}
+
+	var req lmsusecase.LaunchRequest
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, _, err := s.service.Launch(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "launch_rejected", err.Error())
+		return
+	}
+	displayName := req.UserLogin
+	if displayName == "" {
+		displayName = result.Mapping.StudentID
+	}
+	token, expiresAt, err := s.sessionAuth.IssueSession(authn.Principal{
+		Subject:     result.Mapping.StudentID,
+		Role:        authn.RoleStudent,
+		DisplayName: displayName,
+		Source:      "moodle",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "session_failed", err.Error())
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.sessionAuth.CookieName(),
+		Value:    token,
+		Path:     "/",
+		Expires:  expiresAt,
+		MaxAge:   int(time.Until(expiresAt).Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.sessionAuth.CookieSecure(),
+	})
+	http.Redirect(w, r, s.redirectURL(result), http.StatusSeeOther)
+}
+
 func (s *Server) handleMoodleResult(w http.ResponseWriter, r *http.Request) {
 	if err := s.auth.Authenticate(r, nil); err != nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
@@ -110,6 +175,18 @@ func (s *Server) handleLTISkeleton(w http.ResponseWriter, _ *http.Request) {
 		"status":  "skeleton",
 		"message": "LTI 1.3 launch validation is intentionally not enabled in MVP; use POST /lms/moodle/launch for the REST gateway.",
 	})
+}
+
+func (s *Server) redirectURL(result lmsusecase.LaunchAccepted) string {
+	parsed, err := url.Parse(s.frontendURL)
+	if err != nil {
+		return "/"
+	}
+	query := parsed.Query()
+	query.Set("lti_launch_id", result.LaunchID)
+	query.Set("lab_run_id", result.LabRunID)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

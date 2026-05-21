@@ -77,6 +77,73 @@ LIMIT $1`, limit)
 	return view, rows.Err()
 }
 
+func (r *PostgresReader) ListLabRunsByStudent(ctx context.Context, studentID string, limit int) (LabRunsView, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id::text,
+       student_id,
+       course_id,
+       lab_id,
+       state,
+       COALESCE(failure_code, ''),
+       COALESCE(failure_message, ''),
+       created_at,
+       updated_at,
+       (
+           SELECT due_at
+           FROM lifecycle.timers
+           WHERE lab_run_id = core.lab_runs.id
+             AND kind = 'CLEANUP'
+             AND state = 'SCHEDULED'
+           LIMIT 1
+       ) AS cleanup_due_at
+FROM core.lab_runs
+WHERE student_id = $1
+ORDER BY updated_at DESC
+LIMIT $2`, studentID, limit)
+	if err != nil {
+		return LabRunsView{}, err
+	}
+	defer rows.Close()
+
+	view := LabRunsView{Labs: []LabRunView{}}
+	for rows.Next() {
+		var item LabRunView
+		var cleanupDueAt sql.NullTime
+		if err := rows.Scan(
+			&item.ID,
+			&item.StudentID,
+			&item.CourseID,
+			&item.LabID,
+			&item.State,
+			&item.FailureCode,
+			&item.FailureMessage,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+			&cleanupDueAt,
+		); err != nil {
+			return LabRunsView{}, err
+		}
+		item.CleanupDueAt = nullTimePtr(cleanupDueAt)
+		view.Labs = append(view.Labs, item)
+	}
+	return view, rows.Err()
+}
+
+func (r *PostgresReader) HasActiveLabRun(ctx context.Context, studentID string) (bool, error) {
+	var active bool
+	err := r.db.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM core.lab_runs
+    WHERE student_id = $1
+      AND state NOT IN ('FINISHED', 'FAILED')
+)`, studentID).Scan(&active)
+	return active, err
+}
+
 func (r *PostgresReader) GetLabRun(ctx context.Context, labRunID string) (LabRunView, bool, error) {
 	var view LabRunView
 	var cleanupDueAt sql.NullTime

@@ -10,6 +10,7 @@ import (
 
 	"cyber-deploy-hub/internal/contracts"
 	"cyber-deploy-hub/internal/contracts/commands"
+	"cyber-deploy-hub/internal/usecase/labcatalog"
 )
 
 type Repository interface {
@@ -17,14 +18,19 @@ type Repository interface {
 	LoadResult(ctx context.Context, launchID string) (LaunchResult, bool, error)
 }
 
+type LabCatalog interface {
+	Get(ctx context.Context, courseID string, labID string) (labcatalog.Definition, bool, error)
+}
+
 type Service struct {
 	producer string
 	source   string
 	mapper   Mapper
 	repo     Repository
+	catalog  LabCatalog
 }
 
-func NewService(producer string, source string, mapper Mapper, repo Repository) (*Service, error) {
+func NewService(producer string, source string, mapper Mapper, repo Repository, catalog LabCatalog) (*Service, error) {
 	if strings.TrimSpace(producer) == "" {
 		return nil, errors.New("producer is empty")
 	}
@@ -34,13 +40,23 @@ func NewService(producer string, source string, mapper Mapper, repo Repository) 
 	if repo == nil {
 		return nil, errors.New("repository is nil")
 	}
-	return &Service{producer: producer, source: source, mapper: mapper, repo: repo}, nil
+	if catalog == nil {
+		return nil, errors.New("lab catalog is nil")
+	}
+	return &Service{producer: producer, source: source, mapper: mapper, repo: repo, catalog: catalog}, nil
 }
 
 func (s *Service) Launch(ctx context.Context, req LaunchRequest) (LaunchAccepted, bool, error) {
 	mapping, err := s.mapper.Map(req)
 	if err != nil {
 		return LaunchAccepted{}, false, err
+	}
+	definition, found, err := s.catalog.Get(ctx, mapping.CourseID, mapping.LabID)
+	if err != nil {
+		return LaunchAccepted{}, false, err
+	}
+	if !found || !definition.Enabled {
+		return LaunchAccepted{}, false, errors.New("lab definition is not available")
 	}
 
 	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
@@ -64,6 +80,8 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (LaunchAccepted
 			CourseID:  mapping.CourseID,
 			LabID:     mapping.LabID,
 			Source:    s.source,
+			Resources: definition.Resources,
+			Instances: append([]commands.VMBlueprint(nil), definition.Instances...),
 		},
 	})
 	if err != nil {
