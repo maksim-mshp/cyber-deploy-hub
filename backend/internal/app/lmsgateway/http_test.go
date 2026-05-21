@@ -219,6 +219,38 @@ func TestLTILaunchIssuesStudentSessionCookieAndRedirects(t *testing.T) {
 	}
 }
 
+func TestLTIClaimsKeepMoodleCourseAndUseCustomLocalLab(t *testing.T) {
+	req, err := ltiClaims{
+		Issuer:  "https://moodle.example",
+		Subject: "student-ext",
+		Name:    "Student One",
+		Context: ltiContext{
+			ID:    "moodle-course-1",
+			Title: "Moodle Course",
+		},
+		ResourceLink: ltiResourceLink{
+			ID:    "assignment-ext",
+			Title: "Lab 1",
+		},
+		Custom: map[string]any{
+			"course_id": "course-3",
+			"lab_id":    "lab-1-debian",
+		},
+	}.launchRequest()
+	if err != nil {
+		t.Fatalf("launchRequest: %v", err)
+	}
+	if req.MoodleCourseID != "moodle-course-1" {
+		t.Fatalf("moodle_course_id = %s", req.MoodleCourseID)
+	}
+	if req.CourseID != "course-3" {
+		t.Fatalf("course_id = %s", req.CourseID)
+	}
+	if req.LabID != "lab-1-debian" {
+		t.Fatalf("lab_id = %s", req.LabID)
+	}
+}
+
 func testServer(t *testing.T, repo *testLMSRepository) (*Server, *authn.Service) {
 	return testServerWithLTI(t, repo, nil)
 }

@@ -17,6 +17,7 @@ type LaunchRequest struct {
 	MoodleAssignmentID string `json:"moodle_assignment_id"`
 	UserLogin          string `json:"user_login,omitempty"`
 	CourseName         string `json:"course_name,omitempty"`
+	CourseID           string `json:"course_id,omitempty"`
 	LabID              string `json:"lab_id,omitempty"`
 	IdempotencyKey     string `json:"idempotency_key,omitempty"`
 }

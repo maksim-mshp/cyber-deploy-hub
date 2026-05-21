@@ -120,6 +120,11 @@ textarea {
   background: #fff;
 }
 
+input[readonly] {
+  color: #607180;
+  background: #f8fafb;
+}
+
 textarea {
   min-height: 84px;
   resize: vertical;
@@ -228,6 +233,18 @@ textarea {
 
 .subheader {
   margin-top: 20px;
+}
+
+.inline-hint,
+.inline-warning {
+  margin-left: auto;
+  color: #607180;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-warning {
+  color: #8d2c2c;
 }
 
 .metrics-row {

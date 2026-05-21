@@ -28,16 +28,19 @@ func (m Mapper) Map(req LaunchRequest) (Mapping, error) {
 	if err := validateLaunchRequest(req); err != nil {
 		return Mapping{}, err
 	}
-	courseID := strings.TrimSpace(req.MoodleCourseID)
-	if mapped := strings.TrimSpace(m.courseMap[courseID]); mapped != "" {
-		courseID = mapped
+	courseID := strings.TrimSpace(req.CourseID)
+	if courseID == "" {
+		courseID = strings.TrimSpace(req.MoodleCourseID)
+		if mapped := strings.TrimSpace(m.courseMap[courseID]); mapped != "" {
+			courseID = mapped
+		}
 	}
 	labID := strings.TrimSpace(req.LabID)
 	if labID == "" {
 		labID = strings.TrimSpace(req.MoodleAssignmentID)
-	}
-	if mapped := strings.TrimSpace(m.assignmentMap[strings.TrimSpace(req.MoodleAssignmentID)]); mapped != "" {
-		labID = mapped
+		if mapped := strings.TrimSpace(m.assignmentMap[labID]); mapped != "" {
+			labID = mapped
+		}
 	}
 	return Mapping{
 		StudentID: "moodle:" + strings.TrimSpace(req.MoodleUserID),
@@ -49,7 +52,7 @@ func (m Mapper) Map(req LaunchRequest) (Mapping, error) {
 func (m Mapper) Description() MappingDescription {
 	return MappingDescription{
 		StudentIDRule:      "student_id = moodle:{moodle_user_id}",
-		CourseIDRule:       "course_id = LMS_COURSE_MAP_JSON[moodle_course_id] or moodle_course_id",
+		CourseIDRule:       "course_id = explicit course_id, LMS_COURSE_MAP_JSON[moodle_course_id], or moodle_course_id",
 		LabIDRule:          "lab_id = explicit lab_id, LMS_ASSIGNMENT_MAP_JSON[moodle_assignment_id], or moodle_assignment_id",
 		ConfiguredCourses:  cloneMap(m.courseMap),
 		ConfiguredLabs:     cloneMap(m.assignmentMap),

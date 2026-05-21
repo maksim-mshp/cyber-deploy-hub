@@ -181,6 +181,7 @@ function StudentDashboard({ user, initialNotice = '' }) {
   const selectedDefinition = definitions.find((lab) => labKey(lab) === selectedKey) || definitions[0] || null
   const selectedRun = activeRun || runs.find((run) => run.id === selectedRunID) || runs[0] || null
   const selectedRunInstanceID = selectedRun?.id || ''
+  const selectedRunInstanceRevision = selectedRun ? `${selectedRun.state}:${selectedRun.updated_at}` : ''
   const instances = instanceState.runID === selectedRunInstanceID ? instanceState.items : []
 
   const applySnapshot = useCallback((snapshot) => {
@@ -236,7 +237,7 @@ function StudentDashboard({ user, initialNotice = '' }) {
     return () => {
       cancelled = true
     }
-  }, [selectedRunInstanceID])
+  }, [selectedRunInstanceID, selectedRunInstanceRevision])
 
   async function startLab() {
     if (!selectedDefinition || activeRun) {
@@ -348,8 +349,9 @@ function TeacherDashboard({ user }) {
 
   const activeRuns = useMemo(() => runs.filter((run) => activeStates.has(run.state)), [runs])
   const selectedRun = activeRuns.find((run) => run.id === selectedRunID) || activeRuns[0] || null
-  const selectedDefinition = definitions.find((lab) => labKey(lab) === selectedLabKey) || definitions[0] || null
+  const selectedDefinition = definitions.find((lab) => labKey(lab) === selectedLabKey) || null
   const selectedRunInstanceID = selectedRun?.id || ''
+  const selectedRunInstanceRevision = selectedRun ? `${selectedRun.state}:${selectedRun.updated_at}` : ''
   const instances = instanceState.runID === selectedRunInstanceID ? instanceState.items : []
 
   const applySnapshot = useCallback((snapshot) => {
@@ -438,17 +440,23 @@ function TeacherDashboard({ user }) {
     return () => {
       cancelled = true
     }
-  }, [selectedRunInstanceID])
+  }, [selectedRunInstanceID, selectedRunInstanceRevision])
 
   async function saveDefinition() {
     setBusy(true)
     setNotice('')
     try {
+      const payload = normalizeDraft(draft)
+      const validationError = validateDraft(payload)
+      if (validationError) {
+        throw new Error(validationError)
+      }
       const saved = await requestJSON('/api/teacher/lab-definitions', {
         method: 'POST',
-        body: JSON.stringify(normalizeDraft(draft)),
+        body: JSON.stringify(payload),
       })
       setSelectedLabKey(labKey(saved.lab))
+      setDraft(cloneDefinition(saved.lab))
       await refresh()
       setNotice('Конфигурация сохранена')
     } catch (error) {
@@ -556,7 +564,7 @@ function TeacherDashboard({ user }) {
               type="button"
               onClick={() => {
                 setSelectedLabKey('')
-                setDraft(cloneDefinition(emptyDefinition))
+                setDraft(createNewDefinitionDraft(definitions, images, flavors))
               }}
               title="Новая"
             >
@@ -573,9 +581,12 @@ function TeacherDashboard({ user }) {
                 const lab = definitions.find((item) => labKey(item) === nextKey)
                 if (lab) {
                   setDraft(cloneDefinition(lab))
+                } else {
+                  setDraft(createNewDefinitionDraft(definitions, images, flavors))
                 }
               }}
             >
+              {selectedLabKey === '' ? <option value="">Новая конфигурация</option> : null}
               {definitions.map((lab) => (
                 <option key={labKey(lab)} value={labKey(lab)}>
                   {lab.title} {lab.enabled ? '' : '(teacher-only)'}
@@ -602,7 +613,15 @@ function TeacherDashboard({ user }) {
         />
       ) : null}
 
-      <LabEditor draft={draft} setDraft={setDraft} saveDefinition={saveDefinition} busy={busy} images={images} flavors={flavors} />
+      <LabEditor
+        draft={draft}
+        setDraft={setDraft}
+        saveDefinition={saveDefinition}
+        busy={busy}
+        images={images}
+        flavors={flavors}
+        definitions={definitions}
+      />
     </div>
   )
 }
@@ -668,7 +687,10 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
   )
 }
 
-function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors }) {
+function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors, definitions }) {
+  const courseOptions = useMemo(() => uniqueCourses(definitions, draft.course_id), [definitions, draft.course_id])
+  const diskTotal = draft.instances.reduce((sum, instance) => sum + (Number(instance.disk_gib) || 0), 0)
+
   function update(field, value) {
     setDraft((current) => ({ ...current, [field]: value }))
   }
@@ -681,23 +703,39 @@ function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors }) {
   }
 
   function updateInstance(index, field, value) {
-    setDraft((current) => ({
-      ...current,
-      instances: current.instances.map((instance, itemIndex) =>
-        itemIndex === index ? { ...instance, [field]: field === 'disk_gib' ? Number(value) || 0 : value } : instance,
-      ),
-    }))
+    setDraft((current) => {
+      const instances = current.instances.map((instance, itemIndex) => {
+        if (itemIndex !== index) {
+          return instance
+        }
+        const next = { ...instance, [field]: field === 'disk_gib' ? Number(value) || 0 : value }
+        if (field === 'image_id') {
+          next.disk_gib = Math.max(Number(next.disk_gib) || 0, imageMinDisk(value, images))
+        }
+        return next
+      })
+      if (field === 'image_id' || field === 'flavor_id' || field === 'disk_gib') {
+        return { ...current, instances, resources: deriveResources(instances, images, flavors, current.resources) }
+      }
+      return { ...current, instances }
+    })
   }
 
   function addInstance() {
     setDraft((current) => ({
       ...current,
-      instances: [...current.instances, { name: `vm-${current.instances.length + 1}`, image_id: '', flavor_id: '', fixed_ip: '', disk_gib: 20 }],
+      ...withDerivedResources({
+        instances: [...current.instances, createDefaultInstance(current.instances.length + 1, images, flavors)],
+        resources: current.resources,
+      }, images, flavors),
     }))
   }
 
   function removeInstance(index) {
-    setDraft((current) => ({ ...current, instances: current.instances.filter((_, itemIndex) => itemIndex !== index) }))
+    setDraft((current) => {
+      const instances = current.instances.filter((_, itemIndex) => itemIndex !== index)
+      return { ...current, instances, resources: deriveResources(instances, images, flavors, current.resources) }
+    })
   }
 
   return (
@@ -712,11 +750,17 @@ function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors }) {
       <div className="form-grid">
         <label>
           <span>Курс</span>
-          <input value={draft.course_id} onChange={(event) => update('course_id', event.target.value)} />
+          <select value={draft.course_id} onChange={(event) => update('course_id', event.target.value)}>
+            {courseOptions.map((courseID) => (
+              <option key={courseID} value={courseID}>
+                {courseID}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
-          <span>Лаба</span>
-          <input value={draft.lab_id} onChange={(event) => update('lab_id', event.target.value)} />
+          <span>Код в LMS</span>
+          <input value={draft.lab_id} readOnly />
         </label>
         <label className="wide">
           <span>Название</span>
@@ -746,6 +790,9 @@ function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors }) {
 
       <div className="panel-header subheader">
         <h3>Виртуальные машины</h3>
+        <span className={diskTotal > draft.resources.disk_gib ? 'inline-warning' : 'inline-hint'}>
+          Диск VM: {diskTotal}/{draft.resources.disk_gib} GiB
+        </span>
         <button className="secondary-button" type="button" onClick={addInstance}>
           <Plus size={18} />
           VM
@@ -861,32 +908,177 @@ function definitionTitle(run, definitions) {
 function cloneDefinition(definition) {
   return {
     ...definition,
-    resources: { ...definition.resources },
-    instances: definition.instances.map((instance) => ({ ...instance })),
+    resources: { ...(definition.resources || emptyDefinition.resources) },
+    instances: (definition.instances || []).map((instance) => ({ ...instance })),
   }
 }
 
 function normalizeDraft(draft) {
+  const resources = draft.resources || emptyDefinition.resources
   return {
-    ...draft,
-    course_id: draft.course_id.trim(),
-    lab_id: draft.lab_id.trim(),
-    title: draft.title.trim(),
-    description: draft.description.trim(),
+    course_id: String(draft.course_id || '').trim(),
+    lab_id: String(draft.lab_id || '').trim(),
+    title: String(draft.title || '').trim(),
+    description: String(draft.description || '').trim(),
+    enabled: Boolean(draft.enabled),
     resources: {
-      vcpu: Number(draft.resources.vcpu) || 0,
-      ram_mib: Number(draft.resources.ram_mib) || 0,
-      disk_gib: Number(draft.resources.disk_gib) || 0,
+      vcpu: Number(resources.vcpu) || 0,
+      ram_mib: Number(resources.ram_mib) || 0,
+      disk_gib: Number(resources.disk_gib) || 0,
     },
-    instances: draft.instances.map((instance) => ({
-      ...instance,
-      name: instance.name.trim(),
-      image_id: instance.image_id.trim(),
-      flavor_id: instance.flavor_id.trim(),
-      fixed_ip: instance.fixed_ip.trim(),
+    instances: (draft.instances || []).map((instance) => ({
+      name: String(instance.name || '').trim(),
+      image_id: String(instance.image_id || '').trim(),
+      flavor_id: String(instance.flavor_id || '').trim(),
+      fixed_ip: String(instance.fixed_ip || '').trim(),
       disk_gib: Number(instance.disk_gib) || 0,
     })),
   }
+}
+
+function validateDraft(draft) {
+  if (!draft.course_id) {
+    return 'Выберите курс'
+  }
+  if (!draft.lab_id) {
+    return 'Не удалось сформировать код лабораторной'
+  }
+  if (!draft.title) {
+    return 'Заполните название лабораторной'
+  }
+  if (draft.resources.vcpu <= 0 || draft.resources.ram_mib <= 0 || draft.resources.disk_gib <= 0) {
+    return 'Ресурсы лабораторной должны быть больше нуля'
+  }
+  if (draft.instances.length === 0) {
+    return 'Добавьте хотя бы одну виртуальную машину'
+  }
+  const names = new Set()
+  let diskTotal = 0
+  for (const [index, instance] of draft.instances.entries()) {
+    const row = index + 1
+    if (!instance.name) {
+      return `Заполните имя VM ${row}`
+    }
+    if (names.has(instance.name)) {
+      return `Имя VM "${instance.name}" повторяется`
+    }
+    names.add(instance.name)
+    if (!instance.image_id) {
+      return `Выберите образ для VM ${row}`
+    }
+    if (!instance.flavor_id) {
+      return `Выберите flavor для VM ${row}`
+    }
+    if (instance.disk_gib <= 0) {
+      return `Укажите размер диска для VM ${row}`
+    }
+    diskTotal += instance.disk_gib
+  }
+  if (diskTotal > draft.resources.disk_gib) {
+    return `Суммарный диск VM (${diskTotal} GiB) больше лимита лабораторной (${draft.resources.disk_gib} GiB)`
+  }
+  return ''
+}
+
+function createNewDefinitionDraft(definitions, images, flavors) {
+  const courseID = definitions[0]?.course_id || emptyDefinition.course_id
+  const number = nextLabNumber(definitions)
+  const draft = {
+    ...emptyDefinition,
+    course_id: courseID,
+    lab_id: uniqueLabID(`lab-${number}`, definitions, courseID),
+    title: `Лабораторная ${number}`,
+    description: '',
+    instances: [createDefaultInstance(1, images, flavors)],
+  }
+  return withDerivedResources(draft, images, flavors)
+}
+
+function createDefaultInstance(index, images, flavors) {
+  const image = defaultImage(images)
+  const flavor = defaultFlavor(flavors)
+  return {
+    name: `VM-${index}`,
+    image_id: image?.id || '',
+    flavor_id: flavor?.id || '',
+    fixed_ip: `10.0.0.${9 + index}`,
+    disk_gib: image ? imageMinDisk(image.id, images) : emptyDefinition.instances[0].disk_gib,
+  }
+}
+
+function withDerivedResources(draft, images, flavors) {
+  return {
+    ...draft,
+    resources: deriveResources(draft.instances, images, flavors, draft.resources),
+  }
+}
+
+function deriveResources(instances, images, flavors, fallback) {
+  const totals = instances.reduce(
+    (acc, instance) => {
+      const flavor = flavors.find((item) => item.id === instance.flavor_id)
+      acc.vcpu += Number(flavor?.vcpus) || 0
+      acc.ram_mib += Number(flavor?.ram_mib) || 0
+      acc.disk_gib += Math.max(Number(instance.disk_gib) || 0, imageMinDisk(instance.image_id, images))
+      return acc
+    },
+    { vcpu: 0, ram_mib: 0, disk_gib: 0 },
+  )
+  return {
+    vcpu: Math.max(totals.vcpu, Number(fallback?.vcpu) || 1),
+    ram_mib: Math.max(totals.ram_mib, Number(fallback?.ram_mib) || 1024),
+    disk_gib: Math.max(totals.disk_gib, Number(fallback?.disk_gib) || 1),
+  }
+}
+
+function imageMinDisk(imageID, images) {
+  const image = images.find((item) => item.id === imageID)
+  return Number(image?.min_disk_gib) || Number(image?.size_gib) || 1
+}
+
+function defaultImage(images) {
+  return (
+    images.find((image) => image.status === 'active' && image.disk_format !== 'iso' && image.name?.toLowerCase().includes('debian')) ||
+    images.find((image) => image.status === 'active' && image.disk_format !== 'iso') ||
+    images[0]
+  )
+}
+
+function defaultFlavor(flavors) {
+  return flavors.find((flavor) => flavor.name === 'small') || flavors.find((flavor) => flavor.name === 'edu 2x2') || flavors[0]
+}
+
+function uniqueCourses(definitions, currentCourseID) {
+  const values = new Set([currentCourseID || emptyDefinition.course_id, emptyDefinition.course_id])
+  definitions.forEach((definition) => values.add(definition.course_id))
+  return [...values].filter(Boolean)
+}
+
+function nextLabNumber(definitions) {
+  const numbers = definitions.flatMap((definition) => {
+    const values = []
+    const labMatch = definition.lab_id.match(/^lab-(\d+)/)
+    if (labMatch) {
+      values.push(Number(labMatch[1]))
+    }
+    const titleMatch = definition.title.match(/(\d+)/)
+    if (titleMatch) {
+      values.push(Number(titleMatch[1]))
+    }
+    return values.filter(Number.isFinite)
+  })
+  return Math.max(0, ...numbers) + 1
+}
+
+function uniqueLabID(baseID, definitions, courseID) {
+  const existing = new Set(definitions.filter((definition) => definition.course_id === courseID).map((definition) => definition.lab_id))
+  let candidate = baseID
+  let suffix = 2
+  while (existing.has(candidate)) {
+    candidate = `${baseID}-${suffix}`
+    suffix += 1
+  }
+  return candidate
 }
 
 function timeLeft(value) {

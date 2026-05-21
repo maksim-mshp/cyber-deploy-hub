@@ -466,10 +466,8 @@ func (l *LTIService) sign(payload string) string {
 }
 
 func (c ltiClaims) launchRequest() (lmsusecase.LaunchRequest, error) {
-	courseID := customString(c.Custom, "course_id")
-	if courseID == "" {
-		courseID = c.Context.ID
-	}
+	courseID := c.Context.ID
+	localCourseID := customString(c.Custom, "course_id")
 	assignmentID := customString(c.Custom, "assignment_id")
 	if assignmentID == "" {
 		assignmentID = c.ResourceLink.ID
@@ -495,6 +493,7 @@ func (c ltiClaims) launchRequest() (lmsusecase.LaunchRequest, error) {
 		MoodleAssignmentID: assignmentID,
 		UserLogin:          displayName,
 		CourseName:         c.Context.Title,
+		CourseID:           localCourseID,
 		LabID:              labID,
 		IdempotencyKey:     idempotencyKey,
 	}, nil
