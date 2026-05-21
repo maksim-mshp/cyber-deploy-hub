@@ -36,8 +36,9 @@ func TokenHash(token string) (string, error) {
 }
 
 var (
-	ErrInvalidToken  = errors.New("invalid vdi token")
-	ErrTokenExpired  = errors.New("vdi token expired")
-	ErrTokenRevoked  = errors.New("vdi token revoked")
-	ErrTokenNotFound = errors.New("vdi token not found")
+	ErrInvalidToken     = errors.New("invalid vdi token")
+	ErrTokenExpired     = errors.New("vdi token expired")
+	ErrTokenRevoked     = errors.New("vdi token revoked")
+	ErrTokenNotFound    = errors.New("vdi token not found")
+	ErrInstanceNotFound = errors.New("vdi instance not found")
 )

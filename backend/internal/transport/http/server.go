@@ -41,6 +41,7 @@ type ReadModel interface {
 	ListLabRuns(ctx context.Context, limit int) (readmodel.LabRunsView, error)
 	GetLabRun(ctx context.Context, labRunID string) (readmodel.LabRunView, bool, error)
 	GetVDIAccess(ctx context.Context, labRunID string) (readmodel.VDIAccessView, bool, error)
+	ListLabInstances(ctx context.Context, labRunID string) (readmodel.LabInstancesView, bool, error)
 	ListLabRunEvents(ctx context.Context, labRunID string, afterID int64, limit int) ([]readmodel.LabRunEvent, error)
 	ListAuditEvents(ctx context.Context, limit int) (readmodel.AuditView, error)
 	GetSettings(ctx context.Context) (readmodel.SettingsView, error)
@@ -77,6 +78,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/labs", s.handleRequestLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}", s.handleGetLab)
 	mux.HandleFunc("GET /api/labs/{labRunID}/vdi", s.handleGetLabVDI)
+	mux.HandleFunc("GET /api/labs/{labRunID}/instances", s.handleLabInstances)
 	mux.HandleFunc("GET /api/labs/{labRunID}/events", s.handleLabEvents)
 	mux.HandleFunc("GET /api/labs/{labRunID}/checks", s.handleLabChecks)
 	mux.HandleFunc("POST /api/labs/{labRunID}/freeze", s.handleFreezeLab)
@@ -179,6 +181,23 @@ func (s *Server) handleGetLabVDI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view, found, err := s.read.GetVDIAccess(r.Context(), r.PathValue("labRunID"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "lab_not_found", "Lab run was not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleLabInstances(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	view, found, err := s.read.ListLabInstances(r.Context(), r.PathValue("labRunID"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
 		return

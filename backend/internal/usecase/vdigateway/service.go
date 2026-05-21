@@ -22,6 +22,7 @@ type Repository interface {
 	SaveIssueFailure(ctx context.Context, command contracts.Envelope, labRunID string, studentID string, projectID string, reason string, event contracts.Envelope) error
 	RevokeByLabRun(ctx context.Context, command contracts.Envelope, labRunID string, reason string, event contracts.Envelope) error
 	FindToken(ctx context.Context, tokenHash string) (AccessToken, bool, error)
+	FindInstanceTarget(ctx context.Context, labRunID string, serverID string) (InstanceTarget, bool, error)
 	MarkExpired(ctx context.Context, tokenHash string) error
 	RecordOpen(ctx context.Context, tokenHash string, labRunID string, openedAt time.Time, remoteAddr string, userAgent string) error
 }
@@ -172,12 +173,18 @@ func (s *Service) OpenSession(ctx context.Context, req OpenSessionRequest) (Sess
 		}
 		return SessionLaunch{}, ErrTokenExpired
 	}
+	target, err := s.resolveTarget(ctx, token.LabRunID, req)
+	if err != nil {
+		return SessionLaunch{}, err
+	}
 	if err := s.repo.RecordOpen(ctx, hash, token.LabRunID, now, req.RemoteAddr, req.UserAgent); err != nil {
 		return SessionLaunch{}, err
 	}
 	return SessionLaunch{
-		LaunchURL: s.consoleURL(req.Token),
-		ExpiresAt: token.ExpiresAt,
+		LaunchURL:    s.consoleURL(req.Token, target),
+		ExpiresAt:    token.ExpiresAt,
+		ServerID:     target.ServerID,
+		InstanceName: target.Name,
 	}, nil
 }
 
@@ -251,8 +258,40 @@ func (s *Service) newEvent(cause contracts.Envelope, subject contracts.Subject, 
 	})
 }
 
-func (s *Service) consoleURL(token string) string {
-	return strings.ReplaceAll(s.consoleURLTemplate, "{token}", url.QueryEscape(token))
+func (s *Service) resolveTarget(ctx context.Context, labRunID string, req OpenSessionRequest) (InstanceTarget, error) {
+	serverID := strings.TrimSpace(req.ServerID)
+	if serverID == "" {
+		return InstanceTarget{}, nil
+	}
+	target, found, err := s.repo.FindInstanceTarget(ctx, labRunID, serverID)
+	if err != nil {
+		return InstanceTarget{}, err
+	}
+	if !found || target.State != "ACTIVE" {
+		return InstanceTarget{}, ErrInstanceNotFound
+	}
+	if target.Name == "" {
+		target.Name = strings.TrimSpace(req.InstanceName)
+	}
+	return target, nil
+}
+
+func (s *Service) consoleURL(token string, target InstanceTarget) string {
+	rawURL := strings.ReplaceAll(s.consoleURLTemplate, "{token}", url.QueryEscape(token))
+	if target.ServerID == "" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := parsed.Query()
+	query.Set("server_id", target.ServerID)
+	if target.Name != "" {
+		query.Set("instance_name", target.Name)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func validateIssuePayload(payload commands.VDIIssueAccessV1Payload) error {

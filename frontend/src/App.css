@@ -497,6 +497,55 @@ button:disabled {
   margin-top: 16px;
 }
 
+.instances-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.instances-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #00204d;
+}
+
+.instances-head span {
+  color: #6a7788;
+  font-size: 12px;
+}
+
+.instance-list {
+  display: grid;
+  gap: 8px;
+}
+
+.instance-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border: 1px solid #dfebf7;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #f8fbff;
+}
+
+.instance-main {
+  display: grid;
+  gap: 3px;
+}
+
+.instance-main strong {
+  color: #00204d;
+}
+
+.instance-main small {
+  color: #6a7788;
+}
+
 .operations-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 360px;
@@ -693,6 +742,11 @@ button:disabled {
   .summary-actions button,
   .toolbar button {
     width: 100%;
+  }
+
+  .instance-row {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
   }
 
   .flow {

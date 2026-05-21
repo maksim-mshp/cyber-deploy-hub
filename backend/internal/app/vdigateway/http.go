@@ -55,9 +55,11 @@ func (s *httpServer) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *httpServer) handleOpenSession(w http.ResponseWriter, r *http.Request) {
 	launch, err := s.service.OpenSession(r.Context(), vdigatewayusecase.OpenSessionRequest{
-		Token:      r.PathValue("token"),
-		RemoteAddr: remoteAddr(r),
-		UserAgent:  r.UserAgent(),
+		Token:        r.PathValue("token"),
+		ServerID:     r.URL.Query().Get("server_id"),
+		InstanceName: r.URL.Query().Get("instance_name"),
+		RemoteAddr:   remoteAddr(r),
+		UserAgent:    r.UserAgent(),
 	})
 	if err != nil {
 		writeSessionError(w, err)
@@ -83,6 +85,8 @@ func writeSessionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_vdi_token", "VDI access token is invalid")
 	case errors.Is(err, vdigatewayusecase.ErrTokenNotFound):
 		writeError(w, http.StatusNotFound, "vdi_token_not_found", "VDI access token was not found")
+	case errors.Is(err, vdigatewayusecase.ErrInstanceNotFound):
+		writeError(w, http.StatusNotFound, "vdi_instance_not_found", "VDI target instance was not found")
 	case errors.Is(err, vdigatewayusecase.ErrTokenExpired):
 		writeError(w, http.StatusGone, "vdi_token_expired", "VDI access token has expired")
 	case errors.Is(err, vdigatewayusecase.ErrTokenRevoked):

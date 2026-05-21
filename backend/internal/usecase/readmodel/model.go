@@ -39,6 +39,24 @@ type VDIAccessView struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+type LabInstancesView struct {
+	LabRunID  string            `json:"lab_run_id"`
+	Instances []LabInstanceView `json:"instances"`
+}
+
+type LabInstanceView struct {
+	Name      string        `json:"name"`
+	State     string        `json:"state"`
+	ServerID  string        `json:"server_id,omitempty"`
+	VolumeID  string        `json:"volume_id,omitempty"`
+	PortID    string        `json:"port_id,omitempty"`
+	FixedIP   string        `json:"fixed_ip,omitempty"`
+	ImageID   string        `json:"image_id,omitempty"`
+	FlavorID  string        `json:"flavor_id,omitempty"`
+	DiskGiB   int64         `json:"disk_gib"`
+	VDIAccess VDIAccessView `json:"vdi_access"`
+}
+
 type SettingsView struct {
 	Values map[string]any `json:"values"`
 }

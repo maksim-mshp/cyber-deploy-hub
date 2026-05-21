@@ -122,6 +122,69 @@ func TestServiceOpensActiveSession(t *testing.T) {
 	}
 }
 
+func TestServiceOpensTargetedInstanceSession(t *testing.T) {
+	repo := newFakeRepository()
+	hash, err := TokenHash("opaque-token")
+	if err != nil {
+		t.Fatalf("TokenHash: %v", err)
+	}
+	repo.tokens[hash] = AccessToken{
+		TokenHash: hash,
+		LabRunID:  testLabRunID,
+		StudentID: "student-1",
+		ProjectID: "project-1",
+		State:     TokenStateActive,
+		ExpiresAt: testNow.Add(time.Minute),
+		IssuedAt:  testNow,
+	}
+	repo.instances["server-1"] = InstanceTarget{
+		ServerID: "server-1",
+		Name:     "L-MS",
+		State:    "ACTIVE",
+	}
+	service := newTestService(t, repo, fixedTokenGenerator{token: "unused"}, fixedClock{now: testNow})
+
+	launch, err := service.OpenSession(context.Background(), OpenSessionRequest{
+		Token:    "opaque-token",
+		ServerID: "server-1",
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	if launch.LaunchURL != "/novnc?instance_name=L-MS&server_id=server-1&session=opaque-token" {
+		t.Fatalf("LaunchURL = %q", launch.LaunchURL)
+	}
+	if launch.ServerID != "server-1" || launch.InstanceName != "L-MS" {
+		t.Fatalf("launch target = %#v", launch)
+	}
+}
+
+func TestServiceRejectsUnknownInstanceTarget(t *testing.T) {
+	repo := newFakeRepository()
+	hash, err := TokenHash("opaque-token")
+	if err != nil {
+		t.Fatalf("TokenHash: %v", err)
+	}
+	repo.tokens[hash] = AccessToken{
+		TokenHash: hash,
+		LabRunID:  testLabRunID,
+		StudentID: "student-1",
+		ProjectID: "project-1",
+		State:     TokenStateActive,
+		ExpiresAt: testNow.Add(time.Minute),
+		IssuedAt:  testNow,
+	}
+	service := newTestService(t, repo, fixedTokenGenerator{token: "unused"}, fixedClock{now: testNow})
+
+	_, err = service.OpenSession(context.Background(), OpenSessionRequest{
+		Token:    "opaque-token",
+		ServerID: "missing-server",
+	})
+	if !errors.Is(err, ErrInstanceNotFound) {
+		t.Fatalf("OpenSession err = %v, want ErrInstanceNotFound", err)
+	}
+}
+
 func TestServiceExpiresSessionToken(t *testing.T) {
 	repo := newFakeRepository()
 	hash, err := TokenHash("opaque-token")
@@ -151,6 +214,7 @@ func TestServiceExpiresSessionToken(t *testing.T) {
 type fakeRepository struct {
 	issued           AccessToken
 	tokens           map[string]AccessToken
+	instances        map[string]InstanceTarget
 	event            contracts.Envelope
 	failureReason    string
 	revokedLabRunID  string
@@ -161,7 +225,10 @@ type fakeRepository struct {
 }
 
 func newFakeRepository() *fakeRepository {
-	return &fakeRepository{tokens: map[string]AccessToken{}}
+	return &fakeRepository{
+		tokens:    map[string]AccessToken{},
+		instances: map[string]InstanceTarget{},
+	}
 }
 
 func (r *fakeRepository) SaveIssued(_ context.Context, _ contracts.Envelope, token AccessToken, event contracts.Envelope) error {
@@ -187,6 +254,11 @@ func (r *fakeRepository) RevokeByLabRun(_ context.Context, _ contracts.Envelope,
 func (r *fakeRepository) FindToken(_ context.Context, tokenHash string) (AccessToken, bool, error) {
 	token, ok := r.tokens[tokenHash]
 	return token, ok, nil
+}
+
+func (r *fakeRepository) FindInstanceTarget(_ context.Context, _ string, serverID string) (InstanceTarget, bool, error) {
+	target, ok := r.instances[serverID]
+	return target, ok, nil
 }
 
 func (r *fakeRepository) MarkExpired(_ context.Context, tokenHash string) error {

@@ -26,14 +26,24 @@ type IssueResult struct {
 }
 
 type SessionLaunch struct {
-	LaunchURL string    `json:"launch_url"`
-	ExpiresAt time.Time `json:"expires_at"`
+	LaunchURL    string    `json:"launch_url"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	ServerID     string    `json:"server_id,omitempty"`
+	InstanceName string    `json:"instance_name,omitempty"`
 }
 
 type OpenSessionRequest struct {
-	Token      string
-	RemoteAddr string
-	UserAgent  string
+	Token        string
+	ServerID     string
+	InstanceName string
+	RemoteAddr   string
+	UserAgent    string
+}
+
+type InstanceTarget struct {
+	ServerID string
+	Name     string
+	State    string
 }
 
 type clock interface {

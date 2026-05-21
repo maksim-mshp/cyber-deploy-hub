@@ -56,6 +56,7 @@ function App() {
   const [selectedID, setSelectedID] = useState('')
   const [selectedLab, setSelectedLab] = useState(null)
   const [selectedVDI, setSelectedVDI] = useState(null)
+  const [labInstances, setLabInstances] = useState([])
   const [projectPool, setProjectPool] = useState({ states: {}, projects: [] })
   const [auditRows, setAuditRows] = useState([])
   const [checkRuns, setCheckRuns] = useState([])
@@ -70,6 +71,9 @@ function App() {
   const freeProjects = projectPool.states?.FREE ?? 0
   const latestCheck = checkRuns[0]
   const canOperateLab = activeLab && !['CLEANING', 'FAILED', 'FINISHED'].includes(activeLab.state)
+  const activeInstances = labInstances.filter((instance) => instance.state === 'ACTIVE').length
+  const availableVDI = labInstances.filter((instance) => instance.vdi_access?.available).length
+  const instanceCount = labInstances.length || lab3Resources.instances
 
   const requestJSON = useCallback(async (path, options = {}) => {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -110,16 +114,19 @@ function App() {
     if (!labRunID) {
       setSelectedLab(null)
       setSelectedVDI(null)
+      setLabInstances([])
       setCheckRuns([])
       return
     }
-    const [lab, checks, vdi] = await Promise.all([
+    const [lab, checks, vdi, instances] = await Promise.all([
       requestJSON(`/api/labs/${labRunID}`),
       requestJSON(`/api/labs/${labRunID}/checks?limit=3`).catch(() => ({ runs: [] })),
       requestJSON(`/api/labs/${labRunID}/vdi`).catch(() => null),
+      requestJSON(`/api/labs/${labRunID}/instances`).catch(() => ({ instances: [] })),
     ])
     setSelectedLab(lab)
     setSelectedVDI(vdi)
+    setLabInstances(instances.instances ?? [])
     setCheckRuns(checks.runs ?? [])
   }, [requestJSON])
 
@@ -245,6 +252,12 @@ function App() {
     })
   }
 
+  function openInstanceVDI(instance) {
+    const url = instance?.vdi_access?.url
+    if (!url) return
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
   function saveSettings() {
     sendCommand('/api/admin/settings', {
       changed_by: 'teacher-console',
@@ -339,14 +352,42 @@ function App() {
               <div className="resource-map" aria-label="Топология лабораторной 3">
                 <div className="node moodle">Moodle</div>
                 <div className="node gateway">Gateway</div>
-                <div className="node vm">5 VM</div>
+                <div className="node vm">{instanceCount} VM</div>
                 <div className="node storage">Storage</div>
               </div>
               <div className="resource-table">
                 <div><span>vCPU</span><strong>{lab3Resources.cpu}</strong></div>
                 <div><span>RAM</span><strong>{lab3Resources.ram} GiB</strong></div>
                 <div><span>Disk</span><strong>{lab3Resources.disk} GiB</strong></div>
-                <div><span>VDI</span><strong>{selectedVDI?.available ? 'issued' : 'pending'}</strong></div>
+                <div><span>VM active</span><strong>{activeInstances}/{instanceCount}</strong></div>
+                <div><span>VDI</span><strong>{availableVDI}/{instanceCount}</strong></div>
+              </div>
+            </div>
+
+            <div className="instances-block">
+              <div className="instances-head">
+                <strong>Виртуальные машины</strong>
+                <span>{labInstances.length ? `${labInstances.length} VM` : 'ожидание деплоя'}</span>
+              </div>
+              <div className="instance-list">
+                {labInstances.map((instance) => (
+                  <div key={`${activeLab?.id}-${instance.name}`} className="instance-row">
+                    <div className="instance-main">
+                      <strong>{instance.name}</strong>
+                      <small>{instance.fixed_ip || 'IP pending'} · {instance.disk_gib} GiB</small>
+                    </div>
+                    <StatusPill state={instance.state} />
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={!instance.vdi_access?.available}
+                      onClick={() => openInstanceVDI(instance)}
+                    >
+                      <MonitorUp size={16} /> VDI
+                    </button>
+                  </div>
+                ))}
+                {labInstances.length === 0 && <div className="empty-state">VM появятся после события cloud deployment.</div>}
               </div>
             </div>
 
@@ -362,7 +403,7 @@ function App() {
             )}
 
             <div className="toolbar" id="checks">
-              <button type="button" className="primary" disabled={!selectedVDI?.available} onClick={() => window.open(selectedVDI.url, '_blank')}>
+              <button type="button" className="primary" disabled={!selectedVDI?.available || availableVDI === 0} onClick={() => openInstanceVDI(labInstances.find((instance) => instance.vdi_access?.available))}>
                 <MonitorUp size={17} /> VDI
               </button>
               <button type="button" className="secondary" disabled={!canOperateLab} onClick={freezeLab}>

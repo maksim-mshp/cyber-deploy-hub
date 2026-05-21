@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,6 +123,52 @@ WHERE id = $1`, labRunID).Scan(&view.LabRunID, &view.State, &view.URL)
 	return view, true, nil
 }
 
+func (r *PostgresReader) ListLabInstances(ctx context.Context, labRunID string) (LabInstancesView, bool, error) {
+	vdi, found, err := r.GetVDIAccess(ctx, labRunID)
+	if err != nil || !found {
+		return LabInstancesView{}, found, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+SELECT name,
+       state,
+       COALESCE(server_id, ''),
+       COALESCE(volume_id, ''),
+       COALESCE(port_id, ''),
+       COALESCE(host(fixed_ip), ''),
+       image_id,
+       flavor_id,
+       disk_gib
+FROM cloud_adapter.instances
+WHERE lab_run_id = $1
+ORDER BY id`, labRunID)
+	if err != nil {
+		return LabInstancesView{}, false, err
+	}
+	defer rows.Close()
+
+	view := LabInstancesView{LabRunID: labRunID, Instances: []LabInstanceView{}}
+	for rows.Next() {
+		var item LabInstanceView
+		if err := rows.Scan(
+			&item.Name,
+			&item.State,
+			&item.ServerID,
+			&item.VolumeID,
+			&item.PortID,
+			&item.FixedIP,
+			&item.ImageID,
+			&item.FlavorID,
+			&item.DiskGiB,
+		); err != nil {
+			return LabInstancesView{}, false, err
+		}
+		item.VDIAccess = instanceVDIAccess(vdi, item)
+		view.Instances = append(view.Instances, item)
+	}
+	return view, true, rows.Err()
+}
+
 func (r *PostgresReader) ListLabRunEvents(ctx context.Context, labRunID string, afterID int64, limit int) ([]LabRunEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -149,6 +196,44 @@ LIMIT $3`, labRunID, afterID, limit)
 		events[i].Payload = publicEventPayload(events[i].MessageType, events[i].Payload)
 	}
 	return events, nil
+}
+
+func instanceVDIAccess(base VDIAccessView, instance LabInstanceView) VDIAccessView {
+	access := VDIAccessView{
+		LabRunID:  base.LabRunID,
+		Available: base.Available && instance.State == "ACTIVE" && instance.ServerID != "",
+		State:     base.State,
+		Reason:    base.Reason,
+	}
+	if !access.Available {
+		if access.Reason == "" {
+			access.Reason = "instance_vdi_unavailable"
+		}
+		return access
+	}
+	instanceURL, err := appendVDITarget(base.URL, instance)
+	if err != nil {
+		access.Available = false
+		access.Reason = "invalid_vdi_url"
+		return access
+	}
+	access.URL = instanceURL
+	return access
+}
+
+func appendVDITarget(rawURL string, instance LabInstanceView) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("server_id", instance.ServerID)
+	query.Set("instance_name", instance.Name)
+	if instance.FixedIP != "" {
+		query.Set("fixed_ip", instance.FixedIP)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func publicEventPayload(messageType string, payload json.RawMessage) json.RawMessage {
