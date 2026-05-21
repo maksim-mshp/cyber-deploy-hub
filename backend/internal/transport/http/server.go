@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/contracts/commands"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
@@ -43,6 +44,8 @@ type ReadinessChecker interface {
 type OpenStackChecker interface {
 	Configured() bool
 	Check(ctx context.Context) error
+	ListImages(ctx context.Context) ([]openstack.ImageOption, error)
+	ListFlavors(ctx context.Context) ([]openstack.FlavorOption, error)
 }
 
 type ReadModel interface {
@@ -84,6 +87,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /api/admin/openstack/ping", s.handleOpenStackPing)
+	mux.HandleFunc("GET /api/teacher/openstack/images", s.handleListOpenStackImages)
+	mux.HandleFunc("GET /api/teacher/openstack/flavors", s.handleListOpenStackFlavors)
 	mux.HandleFunc("GET /api/lab-definitions", s.handleListAvailableLabDefinitions)
 	mux.HandleFunc("GET /api/labs", s.handleListLabs)
 	mux.HandleFunc("POST /api/labs", s.handleRequestLab)
@@ -133,6 +138,36 @@ func (s *Server) handleOpenStackPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListOpenStackImages(w http.ResponseWriter, r *http.Request) {
+	if s.openstack == nil || !s.openstack.Configured() {
+		writeError(w, http.StatusServiceUnavailable, "openstack_not_configured", "OpenStack credentials are not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	items, err := s.openstack.ListImages(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "openstack_images_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"images": items})
+}
+
+func (s *Server) handleListOpenStackFlavors(w http.ResponseWriter, r *http.Request) {
+	if s.openstack == nil || !s.openstack.Configured() {
+		writeError(w, http.StatusServiceUnavailable, "openstack_not_configured", "OpenStack credentials are not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	items, err := s.openstack.ListFlavors(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "openstack_flavors_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"flavors": items})
 }
 
 func (s *Server) handleListAvailableLabDefinitions(w http.ResponseWriter, r *http.Request) {

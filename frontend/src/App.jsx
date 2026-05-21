@@ -84,6 +84,8 @@ function App() {
   const [selectedVDI, setSelectedVDI] = useState(null)
   const [labInstances, setLabInstances] = useState([])
   const [projectPool, setProjectPool] = useState({ states: {}, projects: [] })
+  const [cloudImages, setCloudImages] = useState([])
+  const [cloudFlavors, setCloudFlavors] = useState([])
   const [auditRows, setAuditRows] = useState([])
   const [checkRuns, setCheckRuns] = useState([])
   const [settings, setSettings] = useState(defaultSettings)
@@ -101,6 +103,18 @@ function App() {
   const studentRun = useMemo(() => {
     return findRunForDefinition(labs, selectedDefinition, normalizedStudentID)
   }, [labs, normalizedStudentID, selectedDefinition])
+  const courseOptions = useMemo(() => {
+    const values = new Set(['course-3'])
+    teacherLabs.forEach((lab) => {
+      if (lab.course_id) {
+        values.add(lab.course_id)
+      }
+    })
+    if (draftLab.course_id) {
+      values.add(draftLab.course_id)
+    }
+    return Array.from(values).sort()
+  }, [draftLab.course_id, teacherLabs])
   const activeLab = mode === 'student'
     ? (labMatchesDefinition(selectedRun, selectedDefinition, normalizedStudentID) ? selectedRun : studentRun)
     : teacherActiveLab
@@ -164,6 +178,15 @@ function App() {
     setProjectPool({ states: payload.states ?? {}, projects: payload.projects ?? [] })
   }, [requestJSON])
 
+  const loadOpenStackCatalog = useCallback(async () => {
+    const [images, flavors] = await Promise.all([
+      requestJSON('/api/teacher/openstack/images').catch(() => ({ images: [] })),
+      requestJSON('/api/teacher/openstack/flavors').catch(() => ({ flavors: [] })),
+    ])
+    setCloudImages(images.images ?? [])
+    setCloudFlavors(flavors.flavors ?? [])
+  }, [requestJSON])
+
   const loadSettings = useCallback(async () => {
     const payload = await requestJSON('/api/admin/settings')
     setSettings({ ...defaultSettings, ...(payload.values ?? {}) })
@@ -211,6 +234,7 @@ function App() {
       const [nextLabs] = await Promise.all([
         loadLabs(),
         loadLabDefinitions(),
+        loadOpenStackCatalog(),
         loadProjectPool(),
         loadSettings(),
         loadAudit(),
@@ -225,7 +249,7 @@ function App() {
     } finally {
       setLoading(false)
     }
-  }, [loadAudit, loadLabDefinitions, loadLabs, loadProjectPool, loadSelectedDetails, loadSettings, selectedID])
+  }, [loadAudit, loadLabDefinitions, loadLabs, loadOpenStackCatalog, loadProjectPool, loadSelectedDetails, loadSettings, selectedID])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -344,14 +368,18 @@ function App() {
   }
 
   async function saveLabDefinition() {
-    const payload = normalizeDefinition(draftLab)
-    setNotice(`Сохранение конфигурации: ${payload.course_id}/${payload.lab_id}`)
+    const payload = normalizeDefinition({
+      ...draftLab,
+      course_id: draftLab.course_id || 'course-3',
+      lab_id: draftLab.lab_id || generateLabID(draftLab.title),
+    })
+    setNotice(`Сохранение конфигурации: ${payload.title || 'лаба'}`)
     try {
       const result = await requestJSON('/api/teacher/lab-definitions', {
         method: 'POST',
         body: JSON.stringify({ ...payload, changed_by: 'teacher-console' }),
       })
-      setNotice(`Конфигурация сохранена: ${result.lab.course_id}/${result.lab.lab_id}`)
+      setNotice(`Конфигурация сохранена: ${result.lab.title || payload.title || 'лаба'}`)
       await loadLabDefinitions()
       setTeacherLabKey(labKey(result.lab))
       setDraftLab(normalizeDefinition(result.lab))
@@ -378,11 +406,69 @@ function App() {
     setDraftLab((current) => setNestedValue(current, path, value))
   }
 
+  function updateDraftTitle(value) {
+    setDraftLab((current) => ({
+      ...current,
+      title: value,
+    }))
+  }
+
   function updateDraftInstance(index, field, value) {
     setDraftLab((current) => {
       const instances = [...(current.instances ?? [])]
       instances[index] = { ...instances[index], [field]: value }
       return { ...current, instances }
+    })
+  }
+
+  function selectDraftImage(index, imageID) {
+    const image = cloudImages.find((item) => item.id === imageID)
+    setDraftLab((current) => {
+      const instances = [...(current.instances ?? [])]
+      const currentInstance = instances[index] ?? {}
+      const minDisk = Number(image?.min_disk_gib ?? 0)
+      instances[index] = {
+        ...currentInstance,
+        image_id: imageID,
+        disk_gib: minDisk > Number(currentInstance.disk_gib ?? 0) ? minDisk : currentInstance.disk_gib,
+      }
+      return { ...current, instances }
+    })
+  }
+
+  function selectDraftFlavor(index, flavorID) {
+    const flavor = cloudFlavors.find((item) => item.id === flavorID)
+    setDraftLab((current) => {
+      const instances = [...(current.instances ?? [])]
+      const currentInstance = instances[index] ?? {}
+      instances[index] = {
+        ...currentInstance,
+        flavor_id: flavorID,
+        disk_gib: Number(currentInstance.disk_gib ?? 0) > 0 ? currentInstance.disk_gib : Number(flavor?.disk_gib ?? 20),
+      }
+      return { ...current, instances }
+    })
+  }
+
+  function recalcDraftResources() {
+    setDraftLab((current) => {
+      const instances = current.instances ?? []
+      const totals = instances.reduce((acc, instance) => {
+        const flavor = cloudFlavors.find((item) => item.id === instance.flavor_id)
+        return {
+          vcpu: acc.vcpu + Number(flavor?.vcpus ?? 0),
+          ram_mib: acc.ram_mib + Number(flavor?.ram_mib ?? 0),
+          disk_gib: acc.disk_gib + Number(instance.disk_gib ?? flavor?.disk_gib ?? 0),
+        }
+      }, { vcpu: 0, ram_mib: 0, disk_gib: 0 })
+      return {
+        ...current,
+        resources: {
+          vcpu: totals.vcpu || current.resources?.vcpu || 1,
+          ram_mib: totals.ram_mib || current.resources?.ram_mib || 1024,
+          disk_gib: totals.disk_gib || current.resources?.disk_gib || 20,
+        },
+      }
     })
   }
 
@@ -461,7 +547,10 @@ function App() {
             auditRows={auditRows}
             capacity={capacity}
             checkLab={checkLab}
+            cloudFlavors={cloudFlavors}
+            cloudImages={cloudImages}
             cleanupLab={() => cleanupLab('teacher_cleanup')}
+            courseOptions={courseOptions}
             createNewLabDefinition={createNewLabDefinition}
             draftLab={draftLab}
             freeProjects={freeProjects}
@@ -471,10 +560,13 @@ function App() {
             notice={notice}
             projectPool={projectPool}
             refreshAll={refreshAll}
+            recalcDraftResources={recalcDraftResources}
             removeDraftInstance={removeDraftInstance}
             saveLabDefinition={saveLabDefinition}
             saveSettings={saveSettings}
             selectTeacherLab={selectTeacherLab}
+            selectDraftFlavor={selectDraftFlavor}
+            selectDraftImage={selectDraftImage}
             selectedID={selectedID}
             setSelectedID={setSelectedID}
             setSettings={setSettings}
@@ -483,6 +575,7 @@ function App() {
             teacherLabs={teacherLabs}
             updateDraft={updateDraft}
             updateDraftInstance={updateDraftInstance}
+            updateDraftTitle={updateDraftTitle}
             addDraftInstance={addDraftInstance}
           />
         )}
@@ -720,7 +813,10 @@ function TeacherPanel({
   auditRows,
   capacity,
   checkLab,
+  cloudFlavors,
+  cloudImages,
   cleanupLab,
+  courseOptions,
   createNewLabDefinition,
   draftLab,
   freeProjects,
@@ -730,10 +826,13 @@ function TeacherPanel({
   notice,
   projectPool,
   refreshAll,
+  recalcDraftResources,
   removeDraftInstance,
   saveLabDefinition,
   saveSettings,
   selectTeacherLab,
+  selectDraftFlavor,
+  selectDraftImage,
   selectedID,
   setSelectedID,
   setSettings,
@@ -742,6 +841,7 @@ function TeacherPanel({
   teacherLabs,
   updateDraft,
   updateDraftInstance,
+  updateDraftTitle,
 }) {
   return (
     <>
@@ -771,17 +871,21 @@ function TeacherPanel({
       <section className="metrics-grid" aria-label="Ключевые метрики">
         <Metric icon={Activity} label="Активные стенды" value={activeCount} hint={`${teacherLabs.length} конфигураций`} />
         <Metric icon={Database} label="Свободные проекты" value={freeProjects} hint={`${projectPool.projects?.length ?? 0} реальных проектов`} />
-        <Metric icon={HardDrive} label="Storage forecast" value={capacity.storage} hint={`threshold ${capacity.threshold}`} />
-        <Metric icon={ShieldCheck} label="Проверки SSH" value={latestCheck?.state ?? 'нет'} hint={latestCheck ? `profile ${latestCheck.profile_id}` : 'нет запусков'} />
+        <Metric icon={HardDrive} label="Прогноз Storage" value={capacity.storage} hint={`порог ${capacity.threshold}`} />
+        <Metric icon={ShieldCheck} label="Проверки SSH" value={latestCheck?.state ?? 'нет'} hint={latestCheck ? 'профиль проверки' : 'нет запусков'} />
       </section>
 
       <section className="teacher-grid">
         <div className="panel config-panel">
           <PanelTitle icon={Settings} title="Конфигурация лабы" right={<StatusPill state={draftLab.enabled ? 'ENABLED' : 'DISABLED'} />} />
           <div className="config-form">
-            <TextField label="course_id" value={draftLab.course_id} onChange={(value) => updateDraft(['course_id'], value)} />
-            <TextField label="lab_id" value={draftLab.lab_id} onChange={(value) => updateDraft(['lab_id'], value)} />
-            <TextField label="Название" value={draftLab.title} onChange={(value) => updateDraft(['title'], value)} />
+            <SelectField
+              label="Курс"
+              value={draftLab.course_id}
+              onChange={(value) => updateDraft(['course_id'], value)}
+              options={courseOptions.map((courseID) => ({ value: courseID, label: courseLabel(courseID) }))}
+            />
+            <TextField label="Название" value={draftLab.title} onChange={updateDraftTitle} />
             <TextField label="Описание" value={draftLab.description} onChange={(value) => updateDraft(['description'], value)} wide />
             <label className="toggle-line">
               <input type="checkbox" checked={draftLab.enabled} onChange={(event) => updateDraft(['enabled'], event.target.checked)} />
@@ -793,22 +897,39 @@ function TeacherPanel({
             <NumberField name="resource-vcpu" label="vCPU" value={draftLab.resources?.vcpu ?? 0} onChange={(value) => updateDraft(['resources', 'vcpu'], value)} />
             <NumberField name="resource-ram" label="RAM, MiB" value={draftLab.resources?.ram_mib ?? 0} onChange={(value) => updateDraft(['resources', 'ram_mib'], value)} />
             <NumberField name="resource-disk" label="Disk, GiB" value={draftLab.resources?.disk_gib ?? 0} onChange={(value) => updateDraft(['resources', 'disk_gib'], value)} />
+            <button type="button" className="secondary full resource-recalc" onClick={recalcDraftResources}>
+              <RefreshCw size={16} /> Пересчитать по VM
+            </button>
           </div>
 
           <div className="instance-editor">
             <div className="instances-head">
-              <strong>VM blueprint</strong>
+              <strong>Виртуальные машины</strong>
               <button type="button" className="secondary slim" onClick={addDraftInstance}>
                 <Plus size={15} /> VM
               </button>
             </div>
             {(draftLab.instances ?? []).map((instance, index) => (
               <div key={`${index}-${instance.name}`} className="instance-edit-row">
-                <TextField label="name" value={instance.name} onChange={(value) => updateDraftInstance(index, 'name', value)} />
-                <TextField label="image_id" value={instance.image_id} onChange={(value) => updateDraftInstance(index, 'image_id', value)} />
-                <TextField label="flavor_id" value={instance.flavor_id} onChange={(value) => updateDraftInstance(index, 'flavor_id', value)} />
-                <TextField label="fixed_ip" value={instance.fixed_ip ?? ''} onChange={(value) => updateDraftInstance(index, 'fixed_ip', value)} />
-                <NumberField name={`disk-${index}`} label="disk_gib" value={instance.disk_gib ?? 0} onChange={(value) => updateDraftInstance(index, 'disk_gib', value)} />
+                <TextField label="Имя VM" value={instance.name} onChange={(value) => updateDraftInstance(index, 'name', value)} />
+                <CatalogPicker
+                  label="Образ"
+                  value={instance.image_id}
+                  onChange={(value) => selectDraftImage(index, value)}
+                  options={imageOptions(cloudImages, instance.image_id)}
+                  disabled={cloudImages.length === 0 && !instance.image_id}
+                  placeholder="Найти образ"
+                />
+                <CatalogPicker
+                  label="Профиль VM"
+                  value={instance.flavor_id}
+                  onChange={(value) => selectDraftFlavor(index, value)}
+                  options={flavorOptions(cloudFlavors, instance.flavor_id)}
+                  disabled={cloudFlavors.length === 0 && !instance.flavor_id}
+                  placeholder="Найти профиль"
+                />
+                <TextField label="IP" value={instance.fixed_ip ?? ''} onChange={(value) => updateDraftInstance(index, 'fixed_ip', value)} />
+                <NumberField name={`disk-${index}`} label="Диск, GiB" value={instance.disk_gib ?? 0} onChange={(value) => updateDraftInstance(index, 'disk_gib', value)} />
                 <button type="button" className="danger icon-only" onClick={() => removeDraftInstance(index)} aria-label="Удалить VM">
                   <Trash2 size={16} />
                 </button>
@@ -833,7 +954,7 @@ function TeacherPanel({
               >
                 <span>
                   <strong>{lab.student_id}</strong>
-                  <small>{lab.course_id} · {lab.lab_id}</small>
+                  <small>{runDefinitionLabel(lab, teacherLabs)}</small>
                 </span>
                 <StatusPill state={lab.state} />
               </button>
@@ -845,7 +966,7 @@ function TeacherPanel({
 
       <section className="operations-grid">
         <div className="panel">
-          <PanelTitle icon={Activity} title="Capacity" right={<span className={capacity.ok ? 'ok' : 'muted'}>{capacity.label}</span>} />
+          <PanelTitle icon={Activity} title="Контроль емкости" right={<span className={capacity.ok ? 'ok' : 'muted'}>{capacity.label}</span>} />
           <div className="capacity-bars">
             <Bar label="CPU" value={capacity.cpuValue} />
             <Bar label="RAM" value={capacity.ramValue} />
@@ -854,10 +975,10 @@ function TeacherPanel({
         </div>
 
         <div className="panel settings-panel">
-          <PanelTitle icon={Settings} title="Lifecycle" />
-          <NumberField name="lab_ttl_seconds" label="Lab TTL, sec" value={settings.lab_ttl_seconds} onChange={(value) => setSettings({ ...settings, lab_ttl_seconds: value })} />
-          <NumberField name="freeze_ttl_seconds" label="Freeze TTL, sec" value={settings.freeze_ttl_seconds} onChange={(value) => setSettings({ ...settings, freeze_ttl_seconds: value })} />
-          <NumberField name="capacity_threshold_percent" label="Capacity threshold, %" value={settings.capacity_threshold_percent} onChange={(value) => setSettings({ ...settings, capacity_threshold_percent: value })} />
+          <PanelTitle icon={Settings} title="Жизненный цикл" />
+          <NumberField name="lab_ttl_seconds" label="Время лабы, сек" value={settings.lab_ttl_seconds} onChange={(value) => setSettings({ ...settings, lab_ttl_seconds: value })} />
+          <NumberField name="freeze_ttl_seconds" label="Заморозка, сек" value={settings.freeze_ttl_seconds} onChange={(value) => setSettings({ ...settings, freeze_ttl_seconds: value })} />
+          <NumberField name="capacity_threshold_percent" label="Порог ресурсов, %" value={settings.capacity_threshold_percent} onChange={(value) => setSettings({ ...settings, capacity_threshold_percent: value })} />
           <button type="button" className="primary full" onClick={saveSettings}>
             <CheckCircle2 size={17} /> Применить
           </button>
@@ -866,10 +987,10 @@ function TeacherPanel({
         <div className="panel teacher-actions">
           <PanelTitle icon={TerminalSquare} title="Операции" />
           <button type="button" className="secondary full" disabled={!activeLab} onClick={checkLab}>
-            <TerminalSquare size={17} /> Check
+            <TerminalSquare size={17} /> Проверить
           </button>
           <button type="button" className="danger full" disabled={!activeLab} onClick={cleanupLab}>
-            <Trash2 size={17} /> Cleanup
+            <Trash2 size={17} /> Удалить стенд
           </button>
         </div>
 
@@ -979,6 +1100,89 @@ function TextField({ label, value, onChange, wide = false }) {
       <span>{label}</span>
       <input value={value ?? ''} onChange={(event) => onChange(event.target.value)} />
     </label>
+  )
+}
+
+function SelectField({ label, value, onChange, options, disabled = false }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <select value={value ?? ''} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
+        <option value="" disabled>{disabled ? 'Справочник недоступен' : 'Выбрать'}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function CatalogPicker({ label, value, onChange, options, disabled = false, placeholder = 'Найти' }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const selected = options.find((option) => option.value === value)
+  const visibleOptions = useMemo(() => filterCatalogOptions(options, query, value), [options, query, value])
+  const inputValue = open ? query : (selected?.label ?? '')
+
+  function selectOption(option) {
+    onChange(option.value)
+    setQuery('')
+    setOpen(false)
+  }
+
+  return (
+    <div className="field catalog-field">
+      <span>{label}</span>
+      <div className="catalog-picker">
+        <input
+          type="search"
+          value={inputValue}
+          onFocus={() => {
+            setQuery('')
+            setOpen(true)
+          }}
+          onChange={(event) => {
+            setQuery(event.target.value)
+            setOpen(true)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpen(false)
+            }
+            if (event.key === 'Enter' && visibleOptions[0]) {
+              event.preventDefault()
+              selectOption(visibleOptions[0])
+            }
+          }}
+          onBlur={() => setOpen(false)}
+          disabled={disabled}
+          placeholder={disabled ? 'Справочник недоступен' : placeholder}
+          role="combobox"
+          aria-expanded={open}
+        />
+        {selected?.meta && <small className="catalog-selected-meta">{selected.meta}</small>}
+        {open && !disabled && (
+          <div className="catalog-menu" role="listbox" onMouseDown={(event) => event.preventDefault()}>
+            {visibleOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`catalog-option ${option.value === value ? 'selected' : ''}`}
+                onMouseDown={() => selectOption(option)}
+                role="option"
+                aria-selected={option.value === value}
+              >
+                <strong>{option.label}</strong>
+                {option.meta && <span>{option.meta}</span>}
+              </button>
+            ))}
+            {visibleOptions.length === 0 && <div className="catalog-empty">Нет совпадений</div>}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1096,6 +1300,133 @@ function labMatchesDefinition(lab, definition, studentID = '') {
     return false
   }
   return lab.course_id === definition.course_id && lab.lab_id === definition.lab_id
+}
+
+function imageOptions(images, currentID) {
+  const options = images.map((image) => ({
+    value: image.id,
+    label: displayName(image.name),
+    meta: imageMeta(image),
+    search: `${image.name ?? ''} ${image.disk_format ?? ''} ${image.visibility ?? ''} ${image.id ?? ''}`,
+  }))
+  return withCurrentOption(options, currentID, 'Сохраненный образ')
+}
+
+function flavorOptions(flavors, currentID) {
+  const options = flavors.map((flavor) => ({
+    value: flavor.id,
+    label: displayName(flavor.name),
+    meta: flavorMeta(flavor),
+    search: `${flavor.name ?? ''} ${flavor.vcpus ?? ''} ${flavor.ram_mib ?? ''} ${flavor.disk_gib ?? ''} ${flavor.id ?? ''}`,
+  }))
+  return withCurrentOption(options, currentID, 'Сохраненный профиль')
+}
+
+function withCurrentOption(options, currentID, label) {
+  if (!currentID || options.some((option) => option.value === currentID)) {
+    return options
+  }
+  return [{ value: currentID, label, meta: 'не найден в текущем каталоге OpenStack', search: currentID }, ...options]
+}
+
+function imageMeta(image) {
+  return [
+    image.disk_format,
+    image.min_disk_gib ? `min ${image.min_disk_gib} GiB` : '',
+    image.size_gib ? `${image.size_gib} GiB` : '',
+  ].filter(Boolean).join(' · ')
+}
+
+function displayName(value) {
+  return String(value ?? '').trim() || 'Без названия'
+}
+
+function flavorMeta(flavor) {
+  const ramGiB = Math.round((Number(flavor.ram_mib ?? 0) / 1024) * 10) / 10
+  return `${flavor.vcpus} vCPU · ${ramGiB} GiB RAM · ${flavor.disk_gib} GiB disk`
+}
+
+function filterCatalogOptions(options, query, currentValue) {
+  const normalizedQuery = normalizeSearch(query)
+  const filtered = normalizedQuery
+    ? options.filter((option) => normalizeSearch(`${option.label} ${option.meta ?? ''} ${option.search ?? ''}`).includes(normalizedQuery))
+    : prioritizeSelected(options, currentValue)
+  return filtered.slice(0, 60)
+}
+
+function prioritizeSelected(options, currentValue) {
+  if (!currentValue) {
+    return options
+  }
+  const selected = options.find((option) => option.value === currentValue)
+  if (!selected) {
+    return options
+  }
+  return [selected, ...options.filter((option) => option.value !== currentValue)]
+}
+
+function normalizeSearch(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function courseLabel(courseID) {
+  const match = String(courseID ?? '').match(/^course-(\d+)$/)
+  if (match) {
+    return `Курс ${match[1]}`
+  }
+  return courseID || 'Курс'
+}
+
+function runDefinitionLabel(lab, definitions) {
+  const definition = definitions.find((item) => item.course_id === lab.course_id && item.lab_id === lab.lab_id)
+  return definition?.title || courseLabel(lab.course_id)
+}
+
+function generateLabID(title) {
+  const source = transliterate(String(title || '').trim().toLowerCase())
+  const ascii = source
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return ascii ? `lab-${ascii}` : `lab-${Date.now()}`
+}
+
+function transliterate(value) {
+  const map = {
+    а: 'a',
+    б: 'b',
+    в: 'v',
+    г: 'g',
+    д: 'd',
+    е: 'e',
+    ё: 'e',
+    ж: 'zh',
+    з: 'z',
+    и: 'i',
+    й: 'y',
+    к: 'k',
+    л: 'l',
+    м: 'm',
+    н: 'n',
+    о: 'o',
+    п: 'p',
+    р: 'r',
+    с: 's',
+    т: 't',
+    у: 'u',
+    ф: 'f',
+    х: 'h',
+    ц: 'c',
+    ч: 'ch',
+    ш: 'sh',
+    щ: 'sch',
+    ъ: '',
+    ы: 'y',
+    ь: '',
+    э: 'e',
+    ю: 'yu',
+    я: 'ya',
+  }
+  return value.replace(/[а-яё]/g, (char) => map[char] ?? '')
 }
 
 function labKey(lab) {

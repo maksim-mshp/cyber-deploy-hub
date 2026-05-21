@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/contracts/commands"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
@@ -112,6 +114,60 @@ func TestHandleUpdateTeacherLabDefinitionSavesCatalogDefinition(t *testing.T) {
 	}
 }
 
+func TestHandleListOpenStackCatalog(t *testing.T) {
+	cloud := &fakeOpenStack{
+		images: []openstack.ImageOption{{
+			ID:         "image-1",
+			Name:       "Debian 12",
+			Status:     "active",
+			Visibility: "public",
+			DiskFormat: "qcow2",
+			MinDiskGiB: 20,
+			SizeGiB:    4,
+		}},
+		flavors: []openstack.FlavorOption{{
+			ID:      "flavor-1",
+			Name:    "small",
+			VCPUs:   1,
+			RAMMiB:  2048,
+			DiskGiB: 0,
+		}},
+	}
+	server := NewServer(&fakeLabUsecase{}, nil, &fakeLabCatalog{}, nil, nil, cloud, nil)
+
+	imageReq := httptest.NewRequest(http.MethodGet, "/api/teacher/openstack/images", nil)
+	imageRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(imageRec, imageReq)
+	if imageRec.Code != http.StatusOK {
+		t.Fatalf("image status = %d, body = %s", imageRec.Code, imageRec.Body.String())
+	}
+	var imagePayload struct {
+		Images []openstack.ImageOption `json:"images"`
+	}
+	if err := json.NewDecoder(imageRec.Body).Decode(&imagePayload); err != nil {
+		t.Fatalf("decode images: %v", err)
+	}
+	if len(imagePayload.Images) != 1 || imagePayload.Images[0].Name != "Debian 12" {
+		t.Fatalf("images = %#v", imagePayload.Images)
+	}
+
+	flavorReq := httptest.NewRequest(http.MethodGet, "/api/teacher/openstack/flavors", nil)
+	flavorRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(flavorRec, flavorReq)
+	if flavorRec.Code != http.StatusOK {
+		t.Fatalf("flavor status = %d, body = %s", flavorRec.Code, flavorRec.Body.String())
+	}
+	var flavorPayload struct {
+		Flavors []openstack.FlavorOption `json:"flavors"`
+	}
+	if err := json.NewDecoder(flavorRec.Body).Decode(&flavorPayload); err != nil {
+		t.Fatalf("decode flavors: %v", err)
+	}
+	if len(flavorPayload.Flavors) != 1 || flavorPayload.Flavors[0].Name != "small" {
+		t.Fatalf("flavors = %#v", flavorPayload.Flavors)
+	}
+}
+
 type fakeLabUsecase struct {
 	called  bool
 	request labs.RequestProvision
@@ -160,4 +216,25 @@ func (c *fakeLabCatalog) Get(_ context.Context, courseID string, labID string) (
 func (c *fakeLabCatalog) Update(_ context.Context, req labcatalog.UpdateRequest) (labcatalog.UpdateResult, error) {
 	c.update = req
 	return labcatalog.UpdateResult{Lab: req.Definition}, nil
+}
+
+type fakeOpenStack struct {
+	images  []openstack.ImageOption
+	flavors []openstack.FlavorOption
+}
+
+func (c *fakeOpenStack) Configured() bool {
+	return true
+}
+
+func (c *fakeOpenStack) Check(context.Context) error {
+	return nil
+}
+
+func (c *fakeOpenStack) ListImages(context.Context) ([]openstack.ImageOption, error) {
+	return c.images, nil
+}
+
+func (c *fakeOpenStack) ListFlavors(context.Context) ([]openstack.FlavorOption, error) {
+	return c.flavors, nil
 }
