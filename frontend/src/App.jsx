@@ -43,6 +43,8 @@ const emptyDefinition = {
   instances: [{ name: 'vm-1', image_id: '', flavor_id: '', fixed_ip: '', disk_gib: 20 }],
 }
 
+const newDefinitionKey = '__new_definition__'
+
 let launchNoticeCache
 
 function App() {
@@ -357,7 +359,15 @@ function TeacherDashboard({ user }) {
   const applySnapshot = useCallback((snapshot) => {
     setDefinitions(snapshot.definitions)
     setRuns(snapshot.runs)
-    setSelectedLabKey((current) => current || (snapshot.definitions[0] ? labKey(snapshot.definitions[0]) : ''))
+    setSelectedLabKey((current) => {
+      if (current === newDefinitionKey) {
+        return current
+      }
+      if (current && snapshot.definitions.some((definition) => labKey(definition) === current)) {
+        return current
+      }
+      return snapshot.definitions[0] ? labKey(snapshot.definitions[0]) : ''
+    })
     setDraft((current) => {
       if (current.lab_id) {
         return current
@@ -563,7 +573,7 @@ function TeacherDashboard({ user }) {
               className="icon-button"
               type="button"
               onClick={() => {
-                setSelectedLabKey('')
+                setSelectedLabKey(newDefinitionKey)
                 setDraft(createNewDefinitionDraft(definitions, images, flavors))
               }}
               title="Новая"
@@ -578,15 +588,17 @@ function TeacherDashboard({ user }) {
               onChange={(event) => {
                 const nextKey = event.target.value
                 setSelectedLabKey(nextKey)
+                if (nextKey === newDefinitionKey) {
+                  setDraft(createNewDefinitionDraft(definitions, images, flavors))
+                  return
+                }
                 const lab = definitions.find((item) => labKey(item) === nextKey)
                 if (lab) {
                   setDraft(cloneDefinition(lab))
-                } else {
-                  setDraft(createNewDefinitionDraft(definitions, images, flavors))
                 }
               }}
             >
-              {selectedLabKey === '' ? <option value="">Новая конфигурация</option> : null}
+              {selectedLabKey === newDefinitionKey ? <option value={newDefinitionKey}>Новая конфигурация</option> : null}
               {definitions.map((lab) => (
                 <option key={labKey(lab)} value={labKey(lab)}>
                   {lab.title} {lab.enabled ? '' : '(teacher-only)'}
