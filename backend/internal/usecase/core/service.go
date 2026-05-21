@@ -36,12 +36,13 @@ type Transition struct {
 }
 
 type Failure struct {
-	LabRunID string
-	Code     string
-	Message  string
-	StepName string
-	Event    contracts.Envelope
-	Next     []contracts.Envelope
+	LabRunID       string
+	Code           string
+	Message        string
+	StepName       string
+	Event          contracts.Envelope
+	ExpectedStates []domain.LabRunState
+	Next           []contracts.Envelope
 }
 
 type LabRun struct {
@@ -77,7 +78,7 @@ func (s *Service) Handle(ctx context.Context, envelope contracts.Envelope) error
 	case events.ProjectAllocatedV1.String():
 		return s.handleProjectAllocated(ctx, envelope)
 	case events.ProjectAllocationFailedV1.String():
-		return s.failFromEvent(ctx, envelope, "PROJECT_ALLOCATION_FAILED", "project allocation failed")
+		return s.failFromEvent(ctx, envelope, "PROJECT_ALLOCATION_FAILED", "project allocation failed", []domain.LabRunState{domain.LabRunAllocatingProject})
 	case events.CapacityApprovedV1.String():
 		return s.handleCapacityApproved(ctx, envelope)
 	case events.CapacityDeniedV1.String():
@@ -85,11 +86,11 @@ func (s *Service) Handle(ctx context.Context, envelope contracts.Envelope) error
 	case events.CloudVDIDeployedV1.String():
 		return s.handleCloudVDIDeployed(ctx, envelope)
 	case events.CloudDeployFailedV1.String():
-		return s.failWithCloudCleanup(ctx, envelope, "CLOUD_DEPLOY_FAILED", "cloud deployment failed", false)
+		return s.failWithCloudCleanup(ctx, envelope, "CLOUD_DEPLOY_FAILED", "cloud deployment failed", false, []domain.LabRunState{domain.LabRunDeploying})
 	case events.VDIAccessIssuedV1.String():
 		return s.handleVDIAccessIssued(ctx, envelope)
 	case events.VDIAccessFailedV1.String():
-		return s.failWithCloudCleanup(ctx, envelope, "VDI_ACCESS_FAILED", "vdi access failed", true)
+		return s.failWithCloudCleanup(ctx, envelope, "VDI_ACCESS_FAILED", "vdi access failed", true, []domain.LabRunState{domain.LabRunIssuingVDIAccess})
 	case events.LifecycleCleanupScheduledV1.String():
 		return s.record(ctx, envelope, domain.LabRunReady, "cleanup_scheduled")
 	case events.LifecycleCleanupDueV1.String():
@@ -99,13 +100,13 @@ func (s *Service) Handle(ctx context.Context, envelope contracts.Envelope) error
 	case events.CloudLabCleanedV1.String():
 		return s.handleCloudLabCleaned(ctx, envelope)
 	case events.CloudCleanupFailedV1.String():
-		return s.failFromEvent(ctx, envelope, "CLOUD_CLEANUP_FAILED", "cloud cleanup failed")
+		return s.failFromEvent(ctx, envelope, "CLOUD_CLEANUP_FAILED", "cloud cleanup failed", []domain.LabRunState{domain.LabRunCleaning, domain.LabRunFailed})
 	case events.ProjectReleasedV1.String():
 		return s.handleProjectReleased(ctx, envelope)
 	case events.CheckerCompletedV1.String():
 		return s.handleCheckerCompleted(ctx, envelope)
 	case events.CheckerFailedV1.String():
-		return s.failFromEvent(ctx, envelope, "CHECKER_FAILED", "checker failed")
+		return s.failFromEvent(ctx, envelope, "CHECKER_FAILED", "checker failed", []domain.LabRunState{domain.LabRunVerifying})
 	default:
 		return nil
 	}
@@ -312,12 +313,13 @@ func (s *Service) handleCapacityDenied(ctx context.Context, envelope contracts.E
 	}
 
 	return s.repo.Fail(ctx, Failure{
-		LabRunID: payload.LabRunID,
-		Code:     "CAPACITY_DENIED",
-		Message:  payload.Reason,
-		StepName: "capacity_denied",
-		Event:    envelope,
-		Next:     []contracts.Envelope{next, failed},
+		LabRunID:       payload.LabRunID,
+		Code:           "CAPACITY_DENIED",
+		Message:        payload.Reason,
+		StepName:       "capacity_denied",
+		Event:          envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunCheckingCapacity},
+		Next:           []contracts.Envelope{next, failed},
 	})
 }
 
@@ -526,7 +528,7 @@ func (s *Service) handleCheckerCompleted(ctx context.Context, envelope contracts
 	})
 }
 
-func (s *Service) failFromEvent(ctx context.Context, envelope contracts.Envelope, code string, fallback string) error {
+func (s *Service) failFromEvent(ctx context.Context, envelope contracts.Envelope, code string, fallback string, expectedStates []domain.LabRunState) error {
 	labRunID, message := failureFromEnvelope(envelope, fallback)
 	if labRunID == "" {
 		return fmt.Errorf("failed event %s does not include lab_run_id", envelope.MessageType)
@@ -536,16 +538,17 @@ func (s *Service) failFromEvent(ctx context.Context, envelope contracts.Envelope
 		return err
 	}
 	return s.repo.Fail(ctx, Failure{
-		LabRunID: labRunID,
-		Code:     code,
-		Message:  message,
-		StepName: envelope.MessageType,
-		Event:    envelope,
-		Next:     []contracts.Envelope{failed},
+		LabRunID:       labRunID,
+		Code:           code,
+		Message:        message,
+		StepName:       envelope.MessageType,
+		Event:          envelope,
+		ExpectedStates: expectedStates,
+		Next:           []contracts.Envelope{failed},
 	})
 }
 
-func (s *Service) failWithCloudCleanup(ctx context.Context, envelope contracts.Envelope, code string, fallback string, revokeVDI bool) error {
+func (s *Service) failWithCloudCleanup(ctx context.Context, envelope contracts.Envelope, code string, fallback string, revokeVDI bool, expectedStates []domain.LabRunState) error {
 	labRunID, message := failureFromEnvelope(envelope, fallback)
 	if labRunID == "" {
 		return fmt.Errorf("failed event %s does not include lab_run_id", envelope.MessageType)
@@ -585,12 +588,13 @@ func (s *Service) failWithCloudCleanup(ctx context.Context, envelope contracts.E
 	}
 
 	return s.repo.Fail(ctx, Failure{
-		LabRunID: labRunID,
-		Code:     code,
-		Message:  message,
-		StepName: envelope.MessageType,
-		Event:    envelope,
-		Next:     next,
+		LabRunID:       labRunID,
+		Code:           code,
+		Message:        message,
+		StepName:       envelope.MessageType,
+		Event:          envelope,
+		ExpectedStates: expectedStates,
+		Next:           next,
 	})
 }
 

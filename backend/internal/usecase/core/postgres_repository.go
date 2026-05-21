@@ -162,6 +162,15 @@ func lockAndCheckState(ctx context.Context, tx pgx.Tx, labRunID string, expected
 
 func (r *PostgresRepository) Fail(ctx context.Context, failure Failure) error {
 	return r.tx(ctx, func(tx pgx.Tx) error {
+		if len(failure.ExpectedStates) > 0 {
+			allowed, err := lockAndCheckState(ctx, tx, failure.LabRunID, failure.ExpectedStates)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return nil
+			}
+		}
 		tag, err := tx.Exec(ctx, `
 UPDATE core.lab_runs
 SET state = $2,

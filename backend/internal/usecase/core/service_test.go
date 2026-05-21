@@ -150,7 +150,13 @@ func TestServiceUsesLabRunInstancesAfterCapacityApproved(t *testing.T) {
 }
 
 func TestServiceFailsAndReleasesProjectWhenCapacityDenied(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunCheckingCapacity,
+		},
+	}
 	service := NewService("core-service", repo)
 	envelope := testEnvelope(t, contracts.MessageKindEvent, events.CapacityDeniedV1, events.CapacityDecisionV1Payload{
 		LabRunID:  "lab-1",
@@ -232,6 +238,32 @@ func TestServiceCleansCloudAfterDeployFailure(t *testing.T) {
 	}
 }
 
+func TestServiceIgnoresDeployFailureAfterCleanupStarted(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunCleaning,
+		},
+	}
+	service := NewService("core-service", repo)
+	envelope := testEnvelope(t, contracts.MessageKindEvent, events.CloudDeployFailedV1, events.FailurePayload{
+		LabRunID: "lab-1",
+		Code:     "OPENSTACK_ERROR",
+		Message:  "nova returned ERROR after cleanup started",
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(repo.failures) != 0 {
+		t.Fatalf("late deploy failure must be ignored, failures = %#v", repo.failures)
+	}
+	if repo.labRun.State != domain.LabRunCleaning {
+		t.Fatalf("state after late deploy failure = %q", repo.labRun.State)
+	}
+}
+
 func TestServiceIgnoresDeploySuccessAfterCleanupStarted(t *testing.T) {
 	repo := &fakeRepository{
 		labRun: LabRun{
@@ -303,7 +335,12 @@ func (r *fakeRepository) Advance(_ context.Context, transition Transition) error
 }
 
 func (r *fakeRepository) Fail(_ context.Context, failure Failure) error {
+	if len(failure.ExpectedStates) > 0 && !stateAllowed(r.currentState(), failure.ExpectedStates) {
+		return nil
+	}
 	r.failures = append(r.failures, failure)
+	r.labRun.ID = failure.LabRunID
+	r.labRun.State = domain.LabRunFailed
 	return nil
 }
 
