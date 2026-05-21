@@ -43,10 +43,13 @@ const emptyDefinition = {
   instances: [{ name: 'vm-1', image_id: '', flavor_id: '', fixed_ip: '', disk_gib: 20 }],
 }
 
+let launchNoticeCache
+
 function App() {
   const [user, setUser] = useState(null)
   const [booting, setBooting] = useState(true)
   const [notice, setNotice] = useState('')
+  const [launchNotice] = useState(getInitialLaunchNotice)
 
   useEffect(() => {
     requestJSON('/api/auth/me')
@@ -79,7 +82,7 @@ function App() {
 
   return (
     <Shell user={user} logout={logout}>
-      {user.role === 'teacher' ? <TeacherDashboard user={user} /> : <StudentDashboard user={user} />}
+      {user.role === 'teacher' ? <TeacherDashboard user={user} /> : <StudentDashboard user={user} initialNotice={launchNotice} />}
     </Shell>
   )
 }
@@ -165,14 +168,14 @@ function Shell({ user, logout, children }) {
   )
 }
 
-function StudentDashboard({ user }) {
+function StudentDashboard({ user, initialNotice = '' }) {
   const [definitions, setDefinitions] = useState([])
   const [runs, setRuns] = useState([])
   const [selectedKey, setSelectedKey] = useState('')
   const [selectedRunID, setSelectedRunID] = useState('')
   const [instanceState, setInstanceState] = useState({ runID: '', items: [] })
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState(initialNotice)
 
   const activeRun = useMemo(() => runs.find((run) => activeStates.has(run.state)) || null, [runs])
   const selectedDefinition = definitions.find((lab) => labKey(lab) === selectedKey) || definitions[0] || null
@@ -890,6 +893,36 @@ function timeLeft(value) {
     return `${minutes} мин`
   }
   return `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`
+}
+
+function consumeLaunchNotice() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  const params = new URLSearchParams(window.location.search)
+  const status = params.get('launch_status')
+  if (!status) {
+    return ''
+  }
+  params.delete('launch_status')
+  params.delete('lti_launch_id')
+  params.delete('lab_run_id')
+  const nextURL = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}${window.location.hash}`
+  window.history.replaceState({}, '', nextURL)
+  if (status === 'ACTIVE_LAB_EXISTS') {
+    return 'У вас уже есть активная лабораторная работа. Новый стенд не запускался.'
+  }
+  if (status === 'ACCEPTED' || status === 'ALREADY_ACCEPTED') {
+    return 'Запуск лабораторной работы принят.'
+  }
+  return ''
+}
+
+function getInitialLaunchNotice() {
+  if (launchNoticeCache === undefined) {
+    launchNoticeCache = consumeLaunchNotice()
+  }
+  return launchNoticeCache
 }
 
 export default App
