@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,6 +65,43 @@ type LTIService struct {
 	mu          sync.Mutex
 	cachedJWKS  jwksDocument
 	jwksExpires time.Time
+}
+
+type ltiDiagnostics struct {
+	Status         string                      `json:"status"`
+	URLs           ltiDiagnosticsURLs          `json:"urls"`
+	Platform       ltiPlatformDiagnostics      `json:"platform"`
+	BrowserSession ltiBrowserSessionDiagnostic `json:"browser_session"`
+	Warnings       []string                    `json:"warnings,omitempty"`
+}
+
+type ltiDiagnosticsURLs struct {
+	OIDCLoginURL  string `json:"oidc_login_url"`
+	LaunchURL     string `json:"launch_url"`
+	TargetLinkURI string `json:"target_link_uri"`
+	FrontendURL   string `json:"frontend_url"`
+}
+
+type ltiPlatformDiagnostics struct {
+	Configured                   bool     `json:"configured"`
+	Issuer                       string   `json:"issuer,omitempty"`
+	ClientID                     string   `json:"client_id,omitempty"`
+	AuthLoginURL                 string   `json:"auth_login_url,omitempty"`
+	JWKSURL                      string   `json:"jwks_url,omitempty"`
+	PublicBaseURL                string   `json:"public_base_url,omitempty"`
+	RedirectURL                  string   `json:"redirect_url,omitempty"`
+	DeploymentIDCount            int      `json:"deployment_id_count"`
+	DeploymentRestrictionEnabled bool     `json:"deployment_restriction_enabled"`
+	SupportedMessageTypes        []string `json:"supported_message_types,omitempty"`
+}
+
+type ltiBrowserSessionDiagnostic struct {
+	Configured     bool   `json:"configured"`
+	CookieName     string `json:"cookie_name,omitempty"`
+	CookieSecure   bool   `json:"cookie_secure"`
+	CookieSameSite string `json:"cookie_same_site,omitempty"`
+	CookieDomain   string `json:"cookie_domain,omitempty"`
+	IFrameReady    bool   `json:"iframe_ready"`
 }
 
 func NewLTIService(cfg LTIConfig, client *http.Client) (*LTIService, error) {
@@ -248,6 +286,115 @@ func (s *Server) handleLTIToolConfiguration(w http.ResponseWriter, r *http.Reque
 		"public_jwks_url":         "",
 		"supported_message_types": []string{ltiMessageTypeResourceLinkRequest},
 	})
+}
+
+func (s *Server) handleLTIDiagnostics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.ltiDiagnostics(r))
+}
+
+func (s *Server) ltiDiagnostics(r *http.Request) ltiDiagnostics {
+	launchURL := absoluteURL(r, "/lti/1p3/launch")
+	loginURL := absoluteURL(r, "/lti/1p3/login")
+	status := "disabled"
+	platform := ltiPlatformDiagnostics{Configured: false}
+	if s.lti != nil {
+		status = "configured"
+		launchURL = s.lti.launchURL(r)
+		loginURL = s.lti.loginURL(r)
+		platform = ltiPlatformDiagnostics{
+			Configured:                   true,
+			Issuer:                       s.lti.platformIssuer,
+			ClientID:                     s.lti.clientID,
+			AuthLoginURL:                 s.lti.authLoginURL,
+			JWKSURL:                      s.lti.jwksURL,
+			PublicBaseURL:                s.lti.publicBaseURL,
+			RedirectURL:                  s.lti.redirectURL,
+			DeploymentIDCount:            len(s.lti.deployments),
+			DeploymentRestrictionEnabled: len(s.lti.deployments) > 0,
+			SupportedMessageTypes:        []string{ltiMessageTypeResourceLinkRequest},
+		}
+	}
+
+	diagnostics := ltiDiagnostics{
+		Status: status,
+		URLs: ltiDiagnosticsURLs{
+			OIDCLoginURL:  loginURL,
+			LaunchURL:     launchURL,
+			TargetLinkURI: launchURL,
+			FrontendURL:   s.frontendURL,
+		},
+		Platform:       platform,
+		BrowserSession: s.browserSessionDiagnostics(),
+	}
+	diagnostics.Warnings = ltiDiagnosticsWarnings(diagnostics)
+	return diagnostics
+}
+
+func (s *Server) browserSessionDiagnostics() ltiBrowserSessionDiagnostic {
+	if s.sessionAuth == nil {
+		return ltiBrowserSessionDiagnostic{}
+	}
+	sameSite := sameSiteModeName(s.sessionAuth.CookieSameSite())
+	secure := s.sessionAuth.CookieSecure()
+	return ltiBrowserSessionDiagnostic{
+		Configured:     true,
+		CookieName:     s.sessionAuth.CookieName(),
+		CookieSecure:   secure,
+		CookieSameSite: sameSite,
+		CookieDomain:   s.sessionAuth.CookieDomain(),
+		IFrameReady:    secure && sameSite == "none",
+	}
+}
+
+func ltiDiagnosticsWarnings(diagnostics ltiDiagnostics) []string {
+	warnings := []string{}
+	if !diagnostics.Platform.Configured {
+		return append(warnings, "LTI 1.3 is not configured")
+	}
+	if !isPublicHTTPSURL(diagnostics.URLs.LaunchURL) {
+		warnings = append(warnings, "LTI launch URL must be public HTTPS for Moodle production")
+	}
+	if !isPublicHTTPSURL(diagnostics.URLs.OIDCLoginURL) {
+		warnings = append(warnings, "LTI login URL must be public HTTPS for Moodle production")
+	}
+	if !isPublicHTTPSURL(diagnostics.URLs.FrontendURL) {
+		warnings = append(warnings, "AUTH_FRONTEND_URL must be a public HTTPS URL for real Moodle users")
+	}
+	if !diagnostics.BrowserSession.IFrameReady {
+		warnings = append(warnings, "Embedded iframe sessions require AUTH_COOKIE_SAME_SITE=none and AUTH_COOKIE_SECURE=true")
+	}
+	if !diagnostics.Platform.DeploymentRestrictionEnabled {
+		warnings = append(warnings, "LTI_DEPLOYMENT_IDS is empty; deployment_id is not restricted")
+	}
+	return warnings
+}
+
+func sameSiteModeName(mode http.SameSite) string {
+	switch mode {
+	case http.SameSiteLaxMode:
+		return "lax"
+	case http.SameSiteStrictMode:
+		return "strict"
+	case http.SameSiteNoneMode:
+		return "none"
+	default:
+		return "default"
+	}
+}
+
+func isPublicHTTPSURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return true
 }
 
 func (l *LTIService) loginRedirectURL(r *http.Request, iss string, clientID string, loginHint string, targetLinkURI string, messageHint string) (string, error) {

@@ -285,6 +285,50 @@ func TestLTIToolConfigurationUsesPublicBaseURL(t *testing.T) {
 	}
 }
 
+func TestLTIDiagnosticsReportsPublicURLAndCookieWarnings(t *testing.T) {
+	lti := testLTIService(t, "https://moodle.example/mod/lti/certs.php")
+	server, _ := testServerWithLTI(t, &testLMSRepository{}, lti)
+	req := httptest.NewRequest(http.MethodGet, "http://internal/lti/1p3/diagnostics", nil)
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Status string `json:"status"`
+		URLs   struct {
+			LaunchURL string `json:"launch_url"`
+		} `json:"urls"`
+		Platform struct {
+			ClientID          string `json:"client_id"`
+			DeploymentIDCount int    `json:"deployment_id_count"`
+		} `json:"platform"`
+		BrowserSession struct {
+			CookieSameSite string `json:"cookie_same_site"`
+			CookieSecure   bool   `json:"cookie_secure"`
+			IFrameReady    bool   `json:"iframe_ready"`
+		} `json:"browser_session"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Status != "configured" || payload.Platform.ClientID != "client-1" || payload.Platform.DeploymentIDCount != 1 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if payload.URLs.LaunchURL != "http://internal/lti/1p3/launch" {
+		t.Fatalf("launch_url = %q", payload.URLs.LaunchURL)
+	}
+	if payload.BrowserSession.CookieSameSite != "lax" || payload.BrowserSession.CookieSecure || payload.BrowserSession.IFrameReady {
+		t.Fatalf("browser_session = %#v", payload.BrowserSession)
+	}
+	if !containsWarning(payload.Warnings, "public HTTPS") || !containsWarning(payload.Warnings, "AUTH_COOKIE_SAME_SITE=none") {
+		t.Fatalf("warnings = %#v", payload.Warnings)
+	}
+}
+
 func TestLTIClaimsKeepMoodleCourseAndUseCustomLocalLab(t *testing.T) {
 	req, err := ltiClaims{
 		Issuer:  "https://moodle.example",
@@ -315,6 +359,15 @@ func TestLTIClaimsKeepMoodleCourseAndUseCustomLocalLab(t *testing.T) {
 	if req.LabID != "lab-1-debian" {
 		t.Fatalf("lab_id = %s", req.LabID)
 	}
+}
+
+func containsWarning(warnings []string, needle string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func testServer(t *testing.T, repo *testLMSRepository) (*Server, *authn.Service) {

@@ -45,6 +45,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /lti/1p3/login", s.handleLTILogin)
 	mux.HandleFunc("POST /lti/1p3/launch", s.handleLTILaunch)
 	mux.HandleFunc("GET /lti/1p3/tool-configuration", s.handleLTIToolConfiguration)
+	mux.HandleFunc("GET /lti/1p3/diagnostics", s.handleLTIDiagnostics)
 	return s.withRequestLog(mux)
 }
 
