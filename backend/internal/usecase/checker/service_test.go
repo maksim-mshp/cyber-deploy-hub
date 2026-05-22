@@ -87,6 +87,58 @@ func TestServicePublishesFailureWhenProfileMissing(t *testing.T) {
 	}
 }
 
+func TestServiceRunsCustomProfileFromCommand(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepository{
+		target: Target{
+			LabRunID:            "33333333-3333-4333-8333-333333333333",
+			ProjectID:           "project-1",
+			Host:                "10.0.0.5",
+			Port:                22,
+			EncryptedPrivateKey: []byte("cipher"),
+			PrivateKeyNonce:     []byte("nonce"),
+		},
+	}
+	service, err := NewService("checker-service", repo, fakeRunner{
+		results: []StepResult{{
+			Sequence:   1,
+			Name:       "filesystem",
+			Type:       StepCommandExitCode,
+			Passed:     true,
+			ExitCode:   0,
+			Message:    "passed",
+			StartedAt:  time.Now(),
+			FinishedAt: time.Now(),
+		}},
+	}, fakeDecryptor{}, 22)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	envelope := testEnvelope(t, commands.CheckerRunV1, commands.CheckerRunV1Payload{
+		LabRunID: "33333333-3333-4333-8333-333333333333",
+		Profile: &commands.CheckerProfileV1{
+			ID:      "teacher-storage",
+			Name:    "Storage check",
+			SSHUser: "ubuntu",
+			Steps: []commands.CheckerStepV1{{
+				Name:           "filesystem",
+				Type:           "command_exit_code",
+				Command:        "findmnt -n /",
+				TimeoutSeconds: 10,
+			}},
+		},
+	})
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if repo.completed.ProfileID != "teacher-storage" || !repo.completed.Passed {
+		t.Fatalf("completed run = %#v", repo.completed)
+	}
+}
+
 type fakeRepository struct {
 	profile        Profile
 	profileFound   bool

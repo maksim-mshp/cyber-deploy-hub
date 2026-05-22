@@ -66,14 +66,35 @@ const emptyProjectPool = {
   projects: [],
 }
 
-const projectSeedTemplate = JSON.stringify(
-  {
-    domains: [{ domain_id: '', course_id: 'course-3', name: '' }],
-    projects: [{ project_id: '', domain_id: '', name: '' }],
-  },
-  null,
-  2,
-)
+const emptyProjectSeedDraft = {
+  course_id: 'course-3',
+  domain_id: '',
+  domain_name: '',
+  project_id: '',
+  project_name: '',
+}
+
+const checkStepTypes = [
+  { value: 'package_installed', label: 'Пакет' },
+  { value: 'file_exists', label: 'Файл' },
+  { value: 'file_contains', label: 'Файл содержит' },
+  { value: 'service_active', label: 'Сервис' },
+  { value: 'port_open', label: 'Порт' },
+  { value: 'command_exit_code', label: 'Команда' },
+]
+
+const defaultSSHCheckProfile = {
+  id: 'teacher-ui-ssh',
+  name: 'Проверка Linux по SSH',
+  ssh_user: 'ubuntu',
+  steps: [
+    { name: 'OpenSSH установлен', type: 'package_installed', package: 'openssh-server', timeout_seconds: 15 },
+    { name: 'Файл ОС доступен', type: 'file_exists', path: '/etc/os-release', timeout_seconds: 10 },
+    { name: 'Файл ОС содержит ID', type: 'file_contains', path: '/etc/os-release', contains: 'ID=', timeout_seconds: 10 },
+    { name: 'SSH сервис активен', type: 'service_active', service: 'ssh', timeout_seconds: 15 },
+    { name: 'SSH порт слушает', type: 'port_open', port: 22, timeout_seconds: 10 },
+  ],
+}
 
 let launchNoticeCache
 
@@ -206,6 +227,7 @@ function StudentDashboard({ user, initialNotice = '' }) {
   const [selectedKey, setSelectedKey] = useState('')
   const [selectedRunID, setSelectedRunID] = useState('')
   const [instanceState, setInstanceState] = useState({ runID: '', items: [] })
+  const [checkState, setCheckState] = useState({ runID: '', runs: [] })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState(initialNotice)
 
@@ -215,6 +237,7 @@ function StudentDashboard({ user, initialNotice = '' }) {
   const selectedRunInstanceID = selectedRun?.id || ''
   const selectedRunInstanceRevision = selectedRun ? `${selectedRun.state}:${selectedRun.updated_at}` : ''
   const instances = instanceState.runID === selectedRunInstanceID ? instanceState.items : []
+  const checks = checkState.runID === selectedRunInstanceID ? checkState.runs : []
 
   const applySnapshot = useCallback((snapshot) => {
     setDefinitions(snapshot.definitions)
@@ -271,6 +294,32 @@ function StudentDashboard({ user, initialNotice = '' }) {
     }
   }, [selectedRunInstanceID, selectedRunInstanceRevision])
 
+  useEffect(() => {
+    if (!selectedRunInstanceID) {
+      return
+    }
+    let cancelled = false
+    const loadChecks = () => {
+      requestJSON(`/api/labs/${selectedRunInstanceID}/checks?limit=6`)
+        .then((data) => {
+          if (!cancelled) {
+            setCheckState({ runID: selectedRunInstanceID, runs: data.runs ?? [] })
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCheckState({ runID: selectedRunInstanceID, runs: [] })
+          }
+        })
+    }
+    loadChecks()
+    const timer = window.setInterval(loadChecks, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [selectedRunInstanceID])
+
   async function startLab() {
     if (!selectedDefinition || activeRun) {
       return
@@ -307,6 +356,27 @@ function StudentDashboard({ user, initialNotice = '' }) {
         body: JSON.stringify({
           reason: 'student_cleanup',
           idempotency_key: `student-cleanup:${selectedRun.id}:${Date.now()}`,
+        }),
+      })
+      await refresh()
+    } catch (error) {
+      setNotice(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function checkLab() {
+    if (!selectedRun || selectedRun.state === 'FINISHED' || selectedRun.state === 'CLEANING') {
+      return
+    }
+    setBusy(true)
+    setNotice('')
+    try {
+      await requestJSON(`/api/labs/${selectedRun.id}/check`, {
+        method: 'POST',
+        body: JSON.stringify({
+          idempotency_key: `student-check:${selectedRun.id}:${Date.now()}`,
         }),
       })
       await refresh()
@@ -356,8 +426,10 @@ function StudentDashboard({ user, initialNotice = '' }) {
         <RunPanel
           run={selectedRun}
           instances={instances}
+          checks={checks}
           title={definitionTitle(selectedRun, definitions)}
           onFinish={finishLab}
+          onCheck={checkLab}
           finishing={busy}
           compact
         />
@@ -375,6 +447,7 @@ function TeacherDashboard({ user }) {
   const [draft, setDraft] = useState(emptyDefinition)
   const [selectedRunID, setSelectedRunID] = useState('')
   const [instanceState, setInstanceState] = useState({ runID: '', items: [] })
+  const [checkState, setCheckState] = useState({ runID: '', runs: [] })
   const [notice, setNotice] = useState('')
   const [catalogWarning, setCatalogWarning] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState(defaultRuntimeSettings)
@@ -387,6 +460,7 @@ function TeacherDashboard({ user }) {
   const selectedRunInstanceID = selectedRun?.id || ''
   const selectedRunInstanceRevision = selectedRun ? `${selectedRun.state}:${selectedRun.updated_at}` : ''
   const instances = instanceState.runID === selectedRunInstanceID ? instanceState.items : []
+  const checks = checkState.runID === selectedRunInstanceID ? checkState.runs : []
 
   const applySnapshot = useCallback((snapshot) => {
     setDefinitions(snapshot.definitions)
@@ -485,6 +559,32 @@ function TeacherDashboard({ user }) {
       cancelled = true
     }
   }, [selectedRunInstanceID, selectedRunInstanceRevision])
+
+  useEffect(() => {
+    if (!selectedRunInstanceID) {
+      return
+    }
+    let cancelled = false
+    const loadChecks = () => {
+      requestJSON(`/api/labs/${selectedRunInstanceID}/checks?limit=6`)
+        .then((data) => {
+          if (!cancelled) {
+            setCheckState({ runID: selectedRunInstanceID, runs: data.runs ?? [] })
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCheckState({ runID: selectedRunInstanceID, runs: [] })
+          }
+        })
+    }
+    loadChecks()
+    const timer = window.setInterval(loadChecks, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [selectedRunInstanceID])
 
   async function saveDefinition() {
     setBusy(true)
@@ -704,10 +804,11 @@ function TeacherDashboard({ user }) {
         <RunPanel
           run={selectedRun}
           instances={instances}
+          checks={checks}
           title={definitionTitle(selectedRun, definitions)}
           onFinish={() => runAction('cleanup', { reason: 'teacher_cleanup', idempotency_key: `teacher-cleanup:${selectedRun.id}:${Date.now()}` })}
           onFreeze={() => runAction('freeze', { reason: 'teacher_support', idempotency_key: `teacher-freeze:${selectedRun.id}:${Date.now()}` })}
-          onCheck={() => runAction('check', { profile_id: 'lab-3-storage', idempotency_key: `teacher-check:${selectedRun.id}:${Date.now()}` })}
+          onCheck={() => runAction('check', { idempotency_key: `teacher-check:${selectedRun.id}:${Date.now()}` })}
           finishing={busy}
         />
       ) : null}
@@ -730,14 +831,22 @@ function ProjectPoolPanel({ pool, onImport, busy }) {
   const states = pool.states ?? {}
   const warning = projectPoolWarning(projects, states)
   const visibleProjects = projects.slice(0, 8)
-  const [seedJSON, setSeedJSON] = useState(projectSeedTemplate)
+  const [draft, setDraft] = useState(emptyProjectSeedDraft)
   const [error, setError] = useState('')
 
+  function update(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }))
+  }
+
   async function importSeed() {
+    const validationError = validateProjectSeedDraft(draft)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+    setError('')
     try {
-      const seed = parseProjectPoolSeed(seedJSON)
-      setError('')
-      await onImport(seed)
+      await onImport(projectSeedFromDraft(draft))
     } catch (nextError) {
       setError(nextError.message)
     }
@@ -765,12 +874,28 @@ function ProjectPoolPanel({ pool, onImport, busy }) {
       {warning ? <p className="form-error">{warning}</p> : null}
       <div className="pool-import">
         <label>
-          <span>Seed JSON</span>
-          <textarea value={seedJSON} onChange={(event) => setSeedJSON(event.target.value)} spellCheck="false" />
+          <span>Курс</span>
+          <input value={draft.course_id} onChange={(event) => update('course_id', event.target.value)} />
+        </label>
+        <label>
+          <span>Домен КИ</span>
+          <input value={draft.domain_id} onChange={(event) => update('domain_id', event.target.value)} />
+        </label>
+        <label>
+          <span>Название домена</span>
+          <input value={draft.domain_name} onChange={(event) => update('domain_name', event.target.value)} />
+        </label>
+        <label>
+          <span>Project ID</span>
+          <input value={draft.project_id} onChange={(event) => update('project_id', event.target.value)} />
+        </label>
+        <label>
+          <span>Название проекта</span>
+          <input value={draft.project_name} onChange={(event) => update('project_name', event.target.value)} />
         </label>
         <button className="secondary-button" type="button" onClick={importSeed} disabled={busy}>
           {busy ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
-          Импортировать
+          Добавить
         </button>
       </div>
       {error ? <p className="form-error">{error}</p> : null}
@@ -860,7 +985,7 @@ function RuntimeSettingsPanel({ settings, onSave, busy }) {
   )
 }
 
-function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishing, compact = false }) {
+function RunPanel({ run, instances, checks = [], title, onFinish, onFreeze, onCheck, finishing, compact = false }) {
   const readyInstances = instances.filter((item) => item.state === 'ACTIVE').length
   const canFinish = run.state !== 'FINISHED' && run.state !== 'CLEANING'
   const canUseActiveAction = !terminalStates.has(run.state) && run.state !== 'CLEANING'
@@ -901,13 +1026,10 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
         ))}
         {instances.length === 0 ? <p className="empty">{emptyInstancesText(run)}</p> : null}
       </div>
+      {onCheck ? (
+        <SSHCheckRunner key={run.id} run={run} checks={checks} onRun={onCheck} busy={finishing} disabled={!canUseActiveAction} />
+      ) : null}
       <div className="action-row">
-        {onCheck ? (
-          <button className="secondary-button" type="button" onClick={onCheck} disabled={finishing || !canUseActiveAction}>
-            <CheckCircle2 size={18} />
-            Проверить
-          </button>
-        ) : null}
         {onFreeze ? (
           <button className="secondary-button" type="button" onClick={onFreeze} disabled={finishing || !canUseActiveAction}>
             <CircleAlert size={18} />
@@ -923,9 +1045,240 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
   )
 }
 
+function SSHCheckRunner({ run, checks, onRun, busy, disabled }) {
+  return (
+    <section className="ssh-check-panel">
+      <div className="panel-header subheader">
+        <div>
+          <h3>SSH-проверка</h3>
+          <p>{checks.length} запусков</p>
+        </div>
+        <button className="primary-button" type="button" onClick={onRun} disabled={busy || disabled}>
+          {busy || run.state === 'VERIFYING' ? <Loader2 className="spin" size={18} /> : <CheckCircle2 size={18} />}
+          Запустить
+        </button>
+      </div>
+      <SSHCheckResults checks={checks} labState={run.state} />
+    </section>
+  )
+}
+
+function SSHCheckProfileEditor({ profile, onChange }) {
+  function update(field, value) {
+    onChange({ ...profile, [field]: value })
+  }
+
+  function updateStep(index, field, value) {
+    onChange({
+      ...profile,
+      steps: profile.steps.map((step, itemIndex) => {
+        if (itemIndex !== index) {
+          return step
+        }
+        if (field === 'type') {
+          return createSSHCheckStep(value, step.name)
+        }
+        if (field === 'timeout_seconds' || field === 'port' || field === 'expected_exit_code') {
+          return { ...step, [field]: Number(value) || 0 }
+        }
+        return { ...step, [field]: value }
+      }),
+    })
+  }
+
+  function addStep() {
+    onChange({ ...profile, steps: [...profile.steps, createSSHCheckStep('file_exists')] })
+  }
+
+  function removeStep(index) {
+    onChange({ ...profile, steps: profile.steps.filter((_, itemIndex) => itemIndex !== index) })
+  }
+
+  return (
+    <section className="check-editor">
+      <div className="panel-header subheader">
+        <h3>SSH-проверка студента</h3>
+        <span className="inline-hint">{profile.steps.length} шагов</span>
+      </div>
+      <div className="check-profile-grid">
+        <label>
+          <span>Профиль</span>
+          <input value={profile.name} onChange={(event) => update('name', event.target.value)} />
+        </label>
+        <label>
+          <span>SSH user</span>
+          <input value={profile.ssh_user} onChange={(event) => update('ssh_user', event.target.value)} />
+        </label>
+      </div>
+      <div className="check-step-list">
+        {profile.steps.map((step, index) => (
+          <SSHCheckStepEditor
+            key={`${step.type}-${index}`}
+            step={step}
+            index={index}
+            onChange={updateStep}
+            onRemove={removeStep}
+            removable={profile.steps.length > 1}
+          />
+        ))}
+      </div>
+      <button className="secondary-button check-add-button" type="button" onClick={addStep} disabled={profile.steps.length >= 24}>
+        <Plus size={18} />
+        Шаг
+      </button>
+    </section>
+  )
+}
+
+function SSHCheckStepEditor({ step, index, onChange, onRemove, removable }) {
+  return (
+    <div className="check-step-row">
+      <span className="check-step-number">{index + 1}</span>
+      <label>
+        <span>Тип</span>
+        <select value={step.type} onChange={(event) => onChange(index, 'type', event.target.value)}>
+          {checkStepTypes.map((type) => (
+            <option key={type.value} value={type.value}>
+              {type.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>Название</span>
+        <input value={step.name} onChange={(event) => onChange(index, 'name', event.target.value)} />
+      </label>
+      <SSHCheckStepFields step={step} index={index} onChange={onChange} />
+      <label>
+        <span>Таймаут, с</span>
+        <input
+          type="number"
+          min="1"
+          max="60"
+          value={step.timeout_seconds}
+          onChange={(event) => onChange(index, 'timeout_seconds', event.target.value)}
+        />
+      </label>
+      <button className="icon-button" type="button" onClick={() => onRemove(index)} disabled={!removable} aria-label="Удалить шаг" title="Удалить шаг">
+        <Trash2 size={18} />
+      </button>
+    </div>
+  )
+}
+
+function SSHCheckStepFields({ step, index, onChange }) {
+  if (step.type === 'package_installed') {
+    return (
+      <label>
+        <span>Пакет</span>
+        <input value={step.package || ''} onChange={(event) => onChange(index, 'package', event.target.value)} />
+      </label>
+    )
+  }
+  if (step.type === 'file_exists') {
+    return (
+      <label>
+        <span>Путь</span>
+        <input value={step.path || ''} onChange={(event) => onChange(index, 'path', event.target.value)} />
+      </label>
+    )
+  }
+  if (step.type === 'file_contains') {
+    return (
+      <div className="check-pair">
+        <label>
+          <span>Путь</span>
+          <input value={step.path || ''} onChange={(event) => onChange(index, 'path', event.target.value)} />
+        </label>
+        <label>
+          <span>Строка</span>
+          <input value={step.contains || ''} onChange={(event) => onChange(index, 'contains', event.target.value)} />
+        </label>
+      </div>
+    )
+  }
+  if (step.type === 'service_active') {
+    return (
+      <label>
+        <span>Сервис</span>
+        <input value={step.service || ''} onChange={(event) => onChange(index, 'service', event.target.value)} />
+      </label>
+    )
+  }
+  if (step.type === 'port_open') {
+    return (
+      <label>
+        <span>TCP порт</span>
+        <input type="number" min="1" max="65535" value={step.port || ''} onChange={(event) => onChange(index, 'port', event.target.value)} />
+      </label>
+    )
+  }
+  return (
+    <div className="check-command-fields">
+      <label>
+        <span>Команда</span>
+        <input value={step.command || ''} onChange={(event) => onChange(index, 'command', event.target.value)} />
+      </label>
+      <label>
+        <span>Exit code</span>
+        <input type="number" value={step.expected_exit_code ?? 0} onChange={(event) => onChange(index, 'expected_exit_code', event.target.value)} />
+      </label>
+    </div>
+  )
+}
+
+function SSHCheckResults({ checks, labState }) {
+  if (checks.length === 0) {
+    return <p className="empty check-empty">{labState === 'VERIFYING' ? 'Проверка запущена' : 'Результатов проверки пока нет'}</p>
+  }
+  return (
+    <div className="check-results">
+      {checks.map((check) => (
+        <article className="check-run" key={check.id}>
+          <div className="check-run-header">
+            <div>
+              <strong>{check.profile_id}</strong>
+              <span>{formatDateTime(check.finished_at || check.started_at)}</span>
+            </div>
+            <StateBadge state={check.state} />
+          </div>
+          {check.error_message ? <Notice tone="danger">{check.error_message}</Notice> : null}
+          <div className="check-result-list">
+            {(check.results ?? []).map((result) => (
+              <SSHCheckResult key={`${check.id}-${result.sequence}`} result={result} />
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function SSHCheckResult({ result }) {
+  const hasLog = Boolean(result.stdout_tail || result.stderr_tail)
+  return (
+    <div className={result.passed ? 'check-result passed' : 'check-result failed'}>
+      <div>
+        <strong>{result.sequence}. {result.name}</strong>
+        <span>{checkTypeLabel(result.type)} / exit {result.exit_code}</span>
+      </div>
+      <StateBadge state={result.passed ? 'PASSED' : 'FAILED'} />
+      <span className="check-message">{result.message}</span>
+      {hasLog ? (
+        <details>
+          <summary>Вывод</summary>
+          {result.stdout_tail ? <pre>{result.stdout_tail}</pre> : null}
+          {result.stderr_tail ? <pre>{result.stderr_tail}</pre> : null}
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
 function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors, definitions }) {
   const courseOptions = useMemo(() => uniqueCourses(definitions, draft.course_id), [definitions, draft.course_id])
   const diskTotal = draft.instances.reduce((sum, instance) => sum + (Number(instance.disk_gib) || 0), 0)
+  const checkProfile = draft.check_profile || createSSHCheckProfile()
 
   function update(field, value) {
     setDraft((current) => ({ ...current, [field]: value }))
@@ -1062,6 +1415,7 @@ function LabEditor({ draft, setDraft, saveDefinition, busy, images, flavors, def
           </div>
         ))}
       </div>
+      <SSHCheckProfileEditor profile={checkProfile} onChange={(profile) => update('check_profile', profile)} />
     </section>
   )
 }
@@ -1206,6 +1560,7 @@ function cloneDefinition(definition) {
     ...definition,
     resources: { ...(definition.resources || emptyDefinition.resources) },
     instances: (definition.instances || []).map((instance) => ({ ...instance })),
+    check_profile: cloneSSHCheckProfile(definition.check_profile),
   }
 }
 
@@ -1229,6 +1584,7 @@ function normalizeDraft(draft) {
       fixed_ip: String(instance.fixed_ip || '').trim(),
       disk_gib: Number(instance.disk_gib) || 0,
     })),
+    check_profile: normalizeSSHCheckProfile(draft.check_profile || createSSHCheckProfile()),
   }
 }
 
@@ -1273,6 +1629,10 @@ function validateDraft(draft) {
   if (diskTotal > draft.resources.disk_gib) {
     return `Суммарный диск VM (${diskTotal} GiB) больше лимита лабораторной (${draft.resources.disk_gib} GiB)`
   }
+  const checkError = validateSSHCheckProfile(draft.check_profile)
+  if (checkError) {
+    return checkError
+  }
   return ''
 }
 
@@ -1306,6 +1666,115 @@ function validateRuntimeSettings(settings) {
   return ''
 }
 
+function createSSHCheckProfile() {
+  return {
+    ...defaultSSHCheckProfile,
+    steps: defaultSSHCheckProfile.steps.map((step) => ({ ...step })),
+  }
+}
+
+function cloneSSHCheckProfile(profile) {
+  const source = profile && profile.steps?.length ? profile : createSSHCheckProfile()
+  return {
+    ...source,
+    steps: source.steps.map((step) => ({ ...step })),
+  }
+}
+
+function createSSHCheckStep(type, name = '') {
+  const common = {
+    name: name || checkStepDefaultName(type),
+    type,
+    timeout_seconds: 10,
+  }
+  switch (type) {
+    case 'package_installed':
+      return { ...common, package: '' }
+    case 'file_contains':
+      return { ...common, path: '', contains: '' }
+    case 'service_active':
+      return { ...common, service: '' }
+    case 'port_open':
+      return { ...common, port: 22 }
+    case 'command_exit_code':
+      return { ...common, command: '', expected_exit_code: 0 }
+    default:
+      return { ...common, path: '' }
+  }
+}
+
+function normalizeSSHCheckProfile(profile) {
+  return {
+    id: 'teacher-ui-ssh',
+    name: String(profile.name || '').trim(),
+    ssh_user: String(profile.ssh_user || '').trim(),
+    steps: (profile.steps || []).map((step, index) => ({
+      sequence: index + 1,
+      name: String(step.name || '').trim(),
+      type: step.type,
+      package: String(step.package || '').trim(),
+      path: String(step.path || '').trim(),
+      contains: String(step.contains || ''),
+      service: String(step.service || '').trim(),
+      port: Number(step.port) || 0,
+      command: String(step.command || '').trim(),
+      expected_exit_code: Number(step.expected_exit_code) || 0,
+      timeout_seconds: Number(step.timeout_seconds) || 0,
+    })),
+  }
+}
+
+function validateSSHCheckProfile(profile) {
+  if (!profile.name) {
+    return 'Укажите название профиля проверки'
+  }
+  if (!profile.ssh_user) {
+    return 'Укажите SSH user'
+  }
+  if (profile.steps.length === 0) {
+    return 'Добавьте хотя бы один шаг SSH-проверки'
+  }
+  if (profile.steps.length > 24) {
+    return 'В профиле может быть не больше 24 шагов'
+  }
+  for (const [index, step] of profile.steps.entries()) {
+    const number = index + 1
+    if (!step.name) {
+      return `Укажите название шага ${number}`
+    }
+    if (step.timeout_seconds <= 0 || step.timeout_seconds > 60) {
+      return `Таймаут шага ${number} должен быть в диапазоне 1-60 секунд`
+    }
+    if (step.type === 'package_installed' && !step.package) {
+      return `Укажите пакет для шага ${number}`
+    }
+    if ((step.type === 'file_exists' || step.type === 'file_contains') && !step.path) {
+      return `Укажите путь для шага ${number}`
+    }
+    if (step.type === 'file_contains' && !step.contains) {
+      return `Укажите строку для шага ${number}`
+    }
+    if (step.type === 'service_active' && !step.service) {
+      return `Укажите сервис для шага ${number}`
+    }
+    if (step.type === 'port_open' && (step.port <= 0 || step.port > 65535)) {
+      return `Порт шага ${number} должен быть в диапазоне 1-65535`
+    }
+    if (step.type === 'command_exit_code' && !step.command) {
+      return `Укажите команду для шага ${number}`
+    }
+  }
+  return ''
+}
+
+function checkStepDefaultName(type) {
+  return checkTypeLabel(type)
+}
+
+function checkTypeLabel(type) {
+  return checkStepTypes.find((item) => item.value === type)?.label || type
+}
+
 function projectPoolWarning(projects, states) {
   if (projects.length === 0) {
     return 'Пул проектов КИ пуст: LTI запуск не сможет выделить изолированный project'
@@ -1319,22 +1788,37 @@ function projectPoolWarning(projects, states) {
   return ''
 }
 
-function parseProjectPoolSeed(raw) {
-  let seed
-  try {
-    seed = JSON.parse(raw)
-  } catch {
-    throw new Error('Seed должен быть валидным JSON')
+function validateProjectSeedDraft(draft) {
+  if (!String(draft.course_id || '').trim()) {
+    return 'Укажите курс проекта'
   }
-  if (!Array.isArray(seed.domains) || seed.domains.length === 0) {
-    throw new Error('Seed должен содержать domains')
+  if (!String(draft.domain_id || '').trim()) {
+    return 'Укажите домен КИ'
   }
-  if (!Array.isArray(seed.projects) || seed.projects.length === 0) {
-    throw new Error('Seed должен содержать projects')
+  if (!String(draft.domain_name || '').trim()) {
+    return 'Укажите название домена'
   }
+  if (!String(draft.project_id || '').trim()) {
+    return 'Укажите Project ID'
+  }
+  if (!String(draft.project_name || '').trim()) {
+    return 'Укажите название проекта'
+  }
+  return ''
+}
+
+function projectSeedFromDraft(draft) {
   return {
-    domains: seed.domains,
-    projects: seed.projects,
+    domains: [{
+      domain_id: String(draft.domain_id).trim(),
+      course_id: String(draft.course_id).trim(),
+      name: String(draft.domain_name).trim(),
+    }],
+    projects: [{
+      project_id: String(draft.project_id).trim(),
+      domain_id: String(draft.domain_id).trim(),
+      name: String(draft.project_name).trim(),
+    }],
   }
 }
 
@@ -1359,6 +1843,14 @@ function secondsToHours(value, fallback) {
   return seconds > 0 ? Math.round(seconds / 3600) : fallback
 }
 
+function formatDateTime(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return 'время неизвестно'
+  }
+  return date.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
+}
+
 function createNewDefinitionDraft(definitions, images, flavors) {
   const courseID = definitions[0]?.course_id || emptyDefinition.course_id
   const number = nextLabNumber(definitions)
@@ -1369,6 +1861,7 @@ function createNewDefinitionDraft(definitions, images, flavors) {
     title: `Лабораторная ${number}`,
     description: '',
     instances: [createDefaultInstance(1, images, flavors)],
+    check_profile: createSSHCheckProfile(),
   }
   return withDerivedResources(draft, images, flavors)
 }

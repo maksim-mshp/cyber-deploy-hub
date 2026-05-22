@@ -47,6 +47,13 @@ type LabRunCommandPayload struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+type RequestVerificationV1Payload struct {
+	LabRunID  string            `json:"lab_run_id"`
+	ProfileID string            `json:"profile_id,omitempty"`
+	Profile   *CheckerProfileV1 `json:"profile,omitempty"`
+	Reason    string            `json:"reason,omitempty"`
+}
+
 type ProjectAllocateV1Payload struct {
 	LabRunID        string `json:"lab_run_id"`
 	StudentID       string `json:"student_id"`
@@ -139,8 +146,30 @@ type LifecycleCancelTimerV1Payload struct {
 }
 
 type CheckerRunV1Payload struct {
-	LabRunID  string `json:"lab_run_id"`
-	ProfileID string `json:"profile_id"`
+	LabRunID  string            `json:"lab_run_id"`
+	ProfileID string            `json:"profile_id"`
+	Profile   *CheckerProfileV1 `json:"profile,omitempty"`
+}
+
+type CheckerProfileV1 struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	SSHUser string          `json:"ssh_user"`
+	Steps   []CheckerStepV1 `json:"steps"`
+}
+
+type CheckerStepV1 struct {
+	Sequence         int    `json:"sequence,omitempty"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Package          string `json:"package,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Contains         string `json:"contains,omitempty"`
+	Service          string `json:"service,omitempty"`
+	Port             int    `json:"port,omitempty"`
+	Command          string `json:"command,omitempty"`
+	ExpectedExitCode int    `json:"expected_exit_code,omitempty"`
+	TimeoutSeconds   int    `json:"timeout_seconds,omitempty"`
 }
 
 type SettingsUpdateV1Payload struct {

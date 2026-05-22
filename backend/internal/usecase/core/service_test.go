@@ -374,6 +374,40 @@ func TestServiceRetriesCleanupForFailedLabRun(t *testing.T) {
 	}
 }
 
+func TestServicePassesCustomVerificationProfileToChecker(t *testing.T) {
+	repo := &fakeRepository{labRun: LabRun{ID: "lab-1", State: domain.LabRunReady}}
+	service := NewService("core-service", repo)
+	profile := &commands.CheckerProfileV1{
+		ID:      "teacher-storage",
+		Name:    "Storage check",
+		SSHUser: "ubuntu",
+		Steps: []commands.CheckerStepV1{{
+			Name:           "Root filesystem mounted",
+			Type:           "command_exit_code",
+			Command:        "findmnt -n /",
+			TimeoutSeconds: 10,
+		}},
+	}
+	envelope := testEnvelope(t, contracts.MessageKindCommand, commands.RequestVerificationV1, commands.RequestVerificationV1Payload{
+		LabRunID: "lab-1",
+		Profile:  profile,
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	transition := repo.lastTransition(t)
+	if transition.State != domain.LabRunVerifying || len(transition.Next) != 1 {
+		t.Fatalf("transition = %#v", transition)
+	}
+	var next commands.CheckerRunV1Payload
+	decodeTestPayload(t, transition.Next[0], &next)
+	if next.ProfileID != profile.ID || next.Profile == nil || next.Profile.Steps[0].Command != profile.Steps[0].Command {
+		t.Fatalf("checker command = %#v", next)
+	}
+}
+
 type fakeRepository struct {
 	startedReq     commands.RequestProvisionV1Payload
 	startedCommand contracts.Envelope

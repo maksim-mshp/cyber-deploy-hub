@@ -33,6 +33,17 @@ func TestServiceUpdatePersistsTeacherLabDefinition(t *testing.T) {
 				FlavorID: "flavor-1",
 				DiskGiB:  20,
 			}},
+			CheckProfile: &commands.CheckerProfileV1{
+				ID:      " teacher-ui-ssh ",
+				Name:    " Linux ",
+				SSHUser: " ubuntu ",
+				Steps: []commands.CheckerStepV1{{
+					Name:           " OS file ",
+					Type:           " file_exists ",
+					Path:           " /etc/os-release ",
+					TimeoutSeconds: 10,
+				}},
+			},
 		},
 	})
 	if err != nil {
@@ -47,6 +58,9 @@ func TestServiceUpdatePersistsTeacherLabDefinition(t *testing.T) {
 	}
 	if repo.definition.Resources.VCPU != 2 || len(repo.definition.Instances) != 1 {
 		t.Fatalf("saved definition = %#v", repo.definition)
+	}
+	if repo.definition.CheckProfile.ID != "teacher-ui-ssh" || repo.definition.CheckProfile.Steps[0].Sequence != 1 {
+		t.Fatalf("saved check profile = %#v", repo.definition.CheckProfile)
 	}
 }
 
@@ -98,6 +112,25 @@ func TestServiceUpdateRejectsInvalidDefinition(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unique") {
 		t.Fatalf("expected duplicate name validation error, got %v", err)
+	}
+
+	_, err = service.Update(context.Background(), UpdateRequest{
+		ChangedBy: "teacher-1",
+		Definition: Definition{
+			CourseID:  "course-3",
+			LabID:     "lab-3",
+			Title:     "Lab 3",
+			Resources: commands.LabResourceProfile{VCPU: 1, RAMMiB: 1024, DiskGiB: 10},
+			Instances: []commands.VMBlueprint{{Name: "vm-1", ImageID: "image-1", FlavorID: "flavor-1", DiskGiB: 10}},
+			CheckProfile: &commands.CheckerProfileV1{
+				ID:      "teacher-ui-ssh",
+				SSHUser: "ubuntu",
+				Steps:   []commands.CheckerStepV1{{Name: "file", Type: "file_exists", TimeoutSeconds: 10}},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "path") {
+		t.Fatalf("expected check profile validation error, got %v", err)
 	}
 }
 

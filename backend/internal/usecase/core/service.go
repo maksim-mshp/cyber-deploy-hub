@@ -235,20 +235,28 @@ func (s *Service) handleRequestCleanup(ctx context.Context, envelope contracts.E
 }
 
 func (s *Service) handleRequestVerification(ctx context.Context, envelope contracts.Envelope) error {
-	var payload commands.LabRunCommandPayload
+	var payload commands.RequestVerificationV1Payload
 	if err := decodePayload(envelope, &payload); err != nil {
 		return err
 	}
 	if payload.LabRunID == "" {
 		return fmt.Errorf("verification command does not include lab_run_id")
 	}
-	profileID := payload.Reason
+	profileID := payload.ProfileID
+	if profileID == "" {
+		// Keep pending commands produced before profile_id was introduced usable.
+		profileID = payload.Reason
+	}
+	if profileID == "" && payload.Profile != nil {
+		profileID = payload.Profile.ID
+	}
 	if profileID == "" {
 		profileID = "default"
 	}
 	next, err := s.newCommand(envelope, commands.CheckerRunV1, commands.CheckerRunV1Payload{
 		LabRunID:  payload.LabRunID,
 		ProfileID: profileID,
+		Profile:   payload.Profile,
 	})
 	if err != nil {
 		return err

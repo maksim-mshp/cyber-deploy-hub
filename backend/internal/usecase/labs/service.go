@@ -52,6 +52,7 @@ type LabCommand struct {
 type CheckCommand struct {
 	LabRunID       string
 	ProfileID      string
+	Profile        *commands.CheckerProfileV1
 	IdempotencyKey string
 }
 
@@ -139,12 +140,22 @@ func (s *Service) RequestCheck(ctx context.Context, req CheckCommand) (CommandAc
 		return CommandAccepted{}, errors.New("lab_run_id is required")
 	}
 	profileID := strings.TrimSpace(req.ProfileID)
+	profile := req.Profile
+	if profile != nil {
+		nextProfile := *profile
+		nextProfile.ID = strings.TrimSpace(nextProfile.ID)
+		if nextProfile.ID != "" {
+			profileID = nextProfile.ID
+		}
+		profile = &nextProfile
+	}
 	if profileID == "" {
 		profileID = "default"
 	}
-	return s.publishCommand(ctx, commands.RequestVerificationV1, req.IdempotencyKey, commands.LabRunCommandPayload{
-		LabRunID: req.LabRunID,
-		Reason:   profileID,
+	return s.publishCommand(ctx, commands.RequestVerificationV1, req.IdempotencyKey, commands.RequestVerificationV1Payload{
+		LabRunID:  req.LabRunID,
+		ProfileID: profileID,
+		Profile:   profile,
 	})
 }
 
@@ -198,6 +209,8 @@ func (r LabCommand) validate() error {
 func payloadLabRunID(payload any) string {
 	switch typed := payload.(type) {
 	case commands.LabRunCommandPayload:
+		return typed.LabRunID
+	case commands.RequestVerificationV1Payload:
 		return typed.LabRunID
 	default:
 		return ""

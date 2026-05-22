@@ -100,6 +100,7 @@ func TestHandleUpdateTeacherLabDefinitionSavesCatalogDefinition(t *testing.T) {
 		"enabled":true,
 		"resources":{"vcpu":2,"ram_mib":4096,"disk_gib":40},
 		"instances":[{"name":"vm-1","image_id":"image-1","flavor_id":"flavor-1","disk_gib":20}],
+		"check_profile":{"id":"teacher-ui-ssh","name":"SSH","ssh_user":"ubuntu","steps":[{"name":"OS","type":"file_exists","path":"/etc/os-release","timeout_seconds":10}]},
 		"changed_by":"teacher-console"
 	}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -113,8 +114,53 @@ func TestHandleUpdateTeacherLabDefinitionSavesCatalogDefinition(t *testing.T) {
 	if catalog.update.ChangedBy != "teacher-console" {
 		t.Fatalf("changed_by = %q", catalog.update.ChangedBy)
 	}
-	if catalog.update.Definition.Resources.VCPU != 2 || len(catalog.update.Definition.Instances) != 1 {
+	if catalog.update.Definition.Resources.VCPU != 2 || len(catalog.update.Definition.Instances) != 1 || catalog.update.Definition.CheckProfile.ID != "teacher-ui-ssh" {
 		t.Fatalf("saved definition = %#v", catalog.update.Definition)
+	}
+}
+
+func TestStudentRunsConfiguredLabCheck(t *testing.T) {
+	authService := testAuthService(t)
+	labUsecase := &fakeLabUsecase{}
+	reader := &fakeReadModel{labs: readmodel.LabRunsView{Labs: []readmodel.LabRunView{{
+		ID:        "lab-run-1",
+		StudentID: "student",
+		CourseID:  "course-3",
+		LabID:     "lab-3",
+		State:     "READY",
+	}}}}
+	catalog := &fakeLabCatalog{definition: labcatalog.Definition{
+		CourseID: "course-3",
+		LabID:    "lab-3",
+		CheckProfile: &commands.CheckerProfileV1{
+			ID:      "teacher-ui-ssh",
+			Name:    "SSH",
+			SSHUser: "ubuntu",
+			Steps: []commands.CheckerStepV1{{
+				Name:           "OS",
+				Type:           "file_exists",
+				Path:           "/etc/os-release",
+				TimeoutSeconds: 10,
+			}},
+		},
+	}}
+	server := NewServer(labUsecase, nil, catalog, reader, authService, nil, nil, nil)
+	token, _, err := authService.IssueSession(authn.Principal{Subject: "student", Role: authn.RoleStudent})
+	if err != nil {
+		t.Fatalf("IssueSession: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/labs/lab-run-1/check", strings.NewReader(`{"idempotency_key":"student-check"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: authService.CookieName(), Value: token})
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if labUsecase.check.Profile == nil || labUsecase.check.Profile.ID != "teacher-ui-ssh" || labUsecase.check.Profile.Steps[0].Command != "" {
+		t.Fatalf("check request = %#v", labUsecase.check)
 	}
 }
 
@@ -377,6 +423,7 @@ func testAuthService(t *testing.T) *authn.Service {
 type fakeLabUsecase struct {
 	called  bool
 	request labs.RequestProvision
+	check   labs.CheckCommand
 }
 
 func (u *fakeLabUsecase) RequestProvision(_ context.Context, req labs.RequestProvision) (labs.ProvisionAccepted, error) {
@@ -393,8 +440,9 @@ func (u *fakeLabUsecase) RequestCleanup(context.Context, labs.LabCommand) (labs.
 	return labs.CommandAccepted{}, nil
 }
 
-func (u *fakeLabUsecase) RequestCheck(context.Context, labs.CheckCommand) (labs.CommandAccepted, error) {
-	return labs.CommandAccepted{}, nil
+func (u *fakeLabUsecase) RequestCheck(_ context.Context, req labs.CheckCommand) (labs.CommandAccepted, error) {
+	u.check = req
+	return labs.CommandAccepted{CommandID: "cmd-check", Status: "ACCEPTED"}, nil
 }
 
 type fakeLabCatalog struct {

@@ -117,6 +117,14 @@ func (d cloudKeyDecryptor) Decrypt(ciphertext []byte, nonce []byte, keyID string
 
 func checkerAckWait(profiles []checkerusecase.Profile, cfg config.CheckerConfig) time.Duration {
 	maxDuration := cfg.SSHTimeout + cfg.DefaultCommandTimeout
+	customStepTimeout := time.Duration(checkerusecase.MaxStepTimeoutSeconds) * time.Second
+	if cfg.DefaultCommandTimeout > customStepTimeout {
+		customStepTimeout = cfg.DefaultCommandTimeout
+	}
+	customDuration := cfg.SSHTimeout + time.Duration(checkerusecase.MaxProfileSteps)*customStepTimeout
+	if customDuration > maxDuration {
+		maxDuration = customDuration
+	}
 	for _, profile := range profiles {
 		profileDuration := cfg.SSHTimeout
 		for _, step := range profile.Steps {

@@ -11,6 +11,11 @@ import (
 	"cyber-deploy-hub/internal/config"
 )
 
+const (
+	MaxProfileSteps       = 24
+	MaxStepTimeoutSeconds = 60
+)
+
 func LoadProfiles(ctx context.Context, cfg config.CheckerConfig) ([]Profile, error) {
 	if strings.TrimSpace(cfg.ProfileJSON) != "" {
 		return decodeProfiles([]byte(cfg.ProfileJSON), cfg.DefaultSSHUser)
@@ -97,6 +102,9 @@ func validateProfile(profile Profile) error {
 	if len(profile.Steps) == 0 {
 		return fmt.Errorf("checker profile %s steps are required", profile.ID)
 	}
+	if len(profile.Steps) > MaxProfileSteps {
+		return fmt.Errorf("checker profile %s has %d steps; maximum is %d", profile.ID, len(profile.Steps), MaxProfileSteps)
+	}
 	seen := map[int]struct{}{}
 	for _, step := range profile.Steps {
 		if _, ok := seen[step.Sequence]; ok {
@@ -147,6 +155,9 @@ func validateStep(step Step) error {
 	}
 	if step.TimeoutSeconds <= 0 {
 		return errors.New("timeout_seconds must be positive")
+	}
+	if step.TimeoutSeconds > MaxStepTimeoutSeconds {
+		return fmt.Errorf("timeout_seconds must not exceed %d", MaxStepTimeoutSeconds)
 	}
 	return nil
 }

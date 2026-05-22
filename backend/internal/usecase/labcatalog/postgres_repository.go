@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"cyber-deploy-hub/internal/contracts/commands"
 )
 
 type PostgresRepository struct {
@@ -30,6 +32,7 @@ SELECT course_id,
        enabled,
        resources,
        instances,
+       check_profile,
        COALESCE(updated_by, ''),
        created_at,
        updated_at
@@ -61,6 +64,7 @@ SELECT course_id,
        enabled,
        resources,
        instances,
+       check_profile,
        COALESCE(updated_by, ''),
        created_at,
        updated_at
@@ -85,6 +89,10 @@ func (r *PostgresRepository) Upsert(ctx context.Context, definition Definition, 
 	if err != nil {
 		return Definition{}, err
 	}
+	checkProfile, err := json.Marshal(definition.CheckProfile)
+	if err != nil {
+		return Definition{}, err
+	}
 	row := r.db.QueryRow(ctx, `
 INSERT INTO core.lab_definitions (
     course_id,
@@ -94,15 +102,17 @@ INSERT INTO core.lab_definitions (
     enabled,
     resources,
     instances,
+    check_profile,
     updated_by
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8::jsonb, 'null'::jsonb), '{}'::jsonb), $9)
 ON CONFLICT (course_id, lab_id) DO UPDATE
 SET title = EXCLUDED.title,
     description = EXCLUDED.description,
     enabled = EXCLUDED.enabled,
     resources = EXCLUDED.resources,
     instances = EXCLUDED.instances,
+    check_profile = EXCLUDED.check_profile,
     updated_by = EXCLUDED.updated_by,
     updated_at = now()
 RETURNING course_id,
@@ -112,6 +122,7 @@ RETURNING course_id,
           enabled,
           resources,
           instances,
+          check_profile,
           COALESCE(updated_by, ''),
           created_at,
           updated_at`,
@@ -122,6 +133,7 @@ RETURNING course_id,
 		definition.Enabled,
 		resources,
 		instances,
+		checkProfile,
 		changedBy,
 	)
 	return scanDefinition(row)
@@ -135,6 +147,7 @@ func scanDefinition(row definitionScanner) (Definition, error) {
 	var lab Definition
 	var rawResources []byte
 	var rawInstances []byte
+	var rawCheckProfile []byte
 	if err := row.Scan(
 		&lab.CourseID,
 		&lab.LabID,
@@ -143,6 +156,7 @@ func scanDefinition(row definitionScanner) (Definition, error) {
 		&lab.Enabled,
 		&rawResources,
 		&rawInstances,
+		&rawCheckProfile,
 		&lab.UpdatedBy,
 		&lab.CreatedAt,
 		&lab.UpdatedAt,
@@ -155,5 +169,20 @@ func scanDefinition(row definitionScanner) (Definition, error) {
 	if err := json.Unmarshal(rawInstances, &lab.Instances); err != nil {
 		return Definition{}, fmt.Errorf("decode lab instances: %w", err)
 	}
+	if err := decodeCheckProfile(rawCheckProfile, &lab.CheckProfile); err != nil {
+		return Definition{}, err
+	}
 	return lab, nil
+}
+
+func decodeCheckProfile(raw []byte, dst **commands.CheckerProfileV1) error {
+	var profile commands.CheckerProfileV1
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return fmt.Errorf("decode lab check profile: %w", err)
+	}
+	if profile.ID == "" && profile.Name == "" && profile.SSHUser == "" && len(profile.Steps) == 0 {
+		return nil
+	}
+	*dst = &profile
+	return nil
 }

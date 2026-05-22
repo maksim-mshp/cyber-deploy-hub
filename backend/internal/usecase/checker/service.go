@@ -72,10 +72,7 @@ func (s *Service) handleRun(ctx context.Context, envelope contracts.Envelope) er
 	if strings.TrimSpace(payload.LabRunID) == "" {
 		return errors.New("lab_run_id is required")
 	}
-	profileID := strings.TrimSpace(payload.ProfileID)
-	if profileID == "" {
-		profileID = "default"
-	}
+	profileID := requestedProfileID(payload)
 
 	run := RunRecord{
 		ID:        uuid.NewSHA1(uuid.NameSpaceURL, []byte(envelope.MessageID+":checker-run")).String(),
@@ -84,8 +81,11 @@ func (s *Service) handleRun(ctx context.Context, envelope contracts.Envelope) er
 		StartedAt: started,
 	}
 
-	profile, found, err := s.repo.LoadProfile(ctx, profileID)
+	profile, found, err := s.loadProfile(ctx, payload, profileID)
 	if err != nil {
+		if payload.Profile != nil && len(payload.Profile.Steps) > 0 {
+			return s.saveFailed(ctx, envelope, run, "CHECK_PROFILE_INVALID", err.Error())
+		}
 		return err
 	}
 	if !found {
@@ -141,6 +141,57 @@ func (s *Service) handleRun(ctx context.Context, envelope contracts.Envelope) er
 		return err
 	}
 	return s.repo.SaveCompleted(ctx, envelope, run, event)
+}
+
+func (s *Service) loadProfile(ctx context.Context, payload commands.CheckerRunV1Payload, profileID string) (Profile, bool, error) {
+	if payload.Profile == nil || len(payload.Profile.Steps) == 0 {
+		return s.repo.LoadProfile(ctx, profileID)
+	}
+	profile := commandProfile(*payload.Profile)
+	if strings.TrimSpace(profile.ID) == "" {
+		profile.ID = profileID
+	}
+	normalizeProfile(&profile, profile.SSHUser)
+	if err := validateProfile(profile); err != nil {
+		return Profile{}, false, err
+	}
+	return profile, true, nil
+}
+
+func requestedProfileID(payload commands.CheckerRunV1Payload) string {
+	profileID := strings.TrimSpace(payload.ProfileID)
+	if profileID == "" && payload.Profile != nil {
+		profileID = strings.TrimSpace(payload.Profile.ID)
+	}
+	if profileID == "" {
+		return "default"
+	}
+	return profileID
+}
+
+func commandProfile(payload commands.CheckerProfileV1) Profile {
+	profile := Profile{
+		ID:      payload.ID,
+		Name:    payload.Name,
+		SSHUser: payload.SSHUser,
+		Steps:   make([]Step, 0, len(payload.Steps)),
+	}
+	for _, step := range payload.Steps {
+		profile.Steps = append(profile.Steps, Step{
+			Sequence:         step.Sequence,
+			Name:             step.Name,
+			Type:             StepType(step.Type),
+			Package:          step.Package,
+			Path:             step.Path,
+			Contains:         step.Contains,
+			Service:          step.Service,
+			Port:             step.Port,
+			Command:          step.Command,
+			ExpectedExitCode: step.ExpectedExitCode,
+			TimeoutSeconds:   step.TimeoutSeconds,
+		})
+	}
+	return profile
 }
 
 func (s *Service) saveFailed(ctx context.Context, cause contracts.Envelope, run RunRecord, code string, message string) error {

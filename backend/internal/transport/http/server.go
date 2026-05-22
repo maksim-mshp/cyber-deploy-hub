@@ -422,7 +422,15 @@ func (s *Server) handleFreezeLab(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCheckLab(w http.ResponseWriter, r *http.Request) {
-	if !s.requireTeacher(w, r) {
+	if !s.authorizeTeacherOrOwner(w, r, r.PathValue("labRunID")) {
+		return
+	}
+	if s.read == nil {
+		writeError(w, http.StatusServiceUnavailable, "read_model_unavailable", "Read model is not configured")
+		return
+	}
+	if s.catalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
 		return
 	}
 	var req checkLabRequest
@@ -430,9 +438,28 @@ func (s *Server) handleCheckLab(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	labRun, found, err := s.read.GetLabRun(r.Context(), r.PathValue("labRunID"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_model_failed", err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "lab_not_found", "Lab run was not found")
+		return
+	}
+	definition, found, err := s.catalog.Get(r.Context(), labRun.CourseID, labRun.LabID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "lab_catalog_failed", err.Error())
+		return
+	}
+	if !found || definition.CheckProfile == nil || len(definition.CheckProfile.Steps) == 0 {
+		writeError(w, http.StatusConflict, "check_not_configured", "SSH check is not configured for this lab")
+		return
+	}
 	result, err := s.labs.RequestCheck(r.Context(), labs.CheckCommand{
 		LabRunID:       r.PathValue("labRunID"),
-		ProfileID:      req.ProfileID,
+		ProfileID:      definition.CheckProfile.ID,
+		Profile:        definition.CheckProfile,
 		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
@@ -631,13 +658,14 @@ func (s *Server) handleUpdateTeacherLabDefinition(w http.ResponseWriter, r *http
 	result, err := s.catalog.Update(r.Context(), labcatalog.UpdateRequest{
 		ChangedBy: changedBy(r, req.ChangedBy),
 		Definition: labcatalog.Definition{
-			CourseID:    req.CourseID,
-			LabID:       req.LabID,
-			Title:       req.Title,
-			Description: req.Description,
-			Enabled:     req.Enabled,
-			Resources:   req.Resources,
-			Instances:   req.Instances,
+			CourseID:     req.CourseID,
+			LabID:        req.LabID,
+			Title:        req.Title,
+			Description:  req.Description,
+			Enabled:      req.Enabled,
+			Resources:    req.Resources,
+			Instances:    req.Instances,
+			CheckProfile: req.CheckProfile,
 		},
 	})
 	if err != nil {
@@ -656,14 +684,15 @@ type requestLabRequest struct {
 }
 
 type updateLabDefinitionRequest struct {
-	CourseID    string                      `json:"course_id"`
-	LabID       string                      `json:"lab_id"`
-	Title       string                      `json:"title"`
-	Description string                      `json:"description"`
-	Enabled     bool                        `json:"enabled"`
-	Resources   commands.LabResourceProfile `json:"resources"`
-	Instances   []commands.VMBlueprint      `json:"instances"`
-	ChangedBy   string                      `json:"changed_by"`
+	CourseID     string                      `json:"course_id"`
+	LabID        string                      `json:"lab_id"`
+	Title        string                      `json:"title"`
+	Description  string                      `json:"description"`
+	Enabled      bool                        `json:"enabled"`
+	Resources    commands.LabResourceProfile `json:"resources"`
+	Instances    []commands.VMBlueprint      `json:"instances"`
+	CheckProfile *commands.CheckerProfileV1  `json:"check_profile"`
+	ChangedBy    string                      `json:"changed_by"`
 }
 
 type labActionRequest struct {
@@ -672,7 +701,6 @@ type labActionRequest struct {
 }
 
 type checkLabRequest struct {
-	ProfileID      string `json:"profile_id"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
 

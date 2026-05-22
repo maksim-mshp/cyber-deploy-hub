@@ -393,15 +393,156 @@ textarea {
 
 .pool-import {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
   align-items: end;
   gap: 12px;
 }
 
-.pool-import textarea {
-  min-height: 132px;
+.ssh-check-panel,
+.check-editor {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.ssh-check-panel {
+  border-top: 1px solid #d8e0e5;
+}
+
+.check-editor {
+  border-top: 1px solid #d8e0e5;
+}
+
+.check-profile-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.4fr);
+  gap: 12px;
+}
+
+.check-step-list,
+.check-results,
+.check-result-list {
+  display: grid;
+  gap: 10px;
+}
+
+.check-step-row {
+  display: grid;
+  grid-template-columns: 28px minmax(122px, 0.7fr) minmax(160px, 0.9fr) minmax(210px, 1.25fr) 96px 40px;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid #d8e0e5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafb;
+}
+
+.check-step-number {
+  align-self: center;
+  width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #14384d;
+  background: #dfeaf0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.check-pair,
+.check-command-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.check-pair {
+  grid-template-columns: 1fr 1fr;
+}
+
+.check-command-fields {
+  grid-template-columns: minmax(0, 1fr) 96px;
+}
+
+.check-add-button {
+  justify-self: start;
+}
+
+.check-empty {
+  margin: 0;
+}
+
+.check-run {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8e0e5;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.check-run-header,
+.check-result {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+}
+
+.check-run-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.check-run-header div,
+.check-result div {
+  display: grid;
+  gap: 3px;
+}
+
+.check-run-header span,
+.check-result span {
+  color: #607180;
+  font-size: 12px;
+}
+
+.check-result {
+  grid-template-columns: minmax(180px, 0.8fr) auto minmax(160px, 1fr);
+  border: 1px solid #d8e0e5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafb;
+}
+
+.check-result.failed {
+  border-color: #f0c7c7;
+  background: #fff7f7;
+}
+
+.check-message {
+  overflow-wrap: anywhere;
+}
+
+.check-result details {
+  grid-column: 1 / -1;
+  color: #42515d;
+  font-size: 12px;
+}
+
+.check-result summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.check-result pre {
+  overflow: auto;
+  margin: 8px 0 0;
+  border-radius: 6px;
+  padding: 10px;
+  color: #dce8ef;
+  background: #1b2832;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .pool-stats {
@@ -502,7 +643,8 @@ textarea {
 
 .state-ready,
 .state-verified,
-.state-active {
+.state-active,
+.state-passed {
   color: #17613a;
   background: #e6f6ee;
 }
@@ -547,7 +689,9 @@ textarea {
   .teacher-grid,
   .form-grid,
   .pool-import,
-  .vm-row {
+  .vm-row,
+  .check-profile-grid,
+  .check-step-row {
     grid-template-columns: 1fr;
   }
 
@@ -557,11 +701,21 @@ textarea {
 
   .run-item,
   .instance-row,
-  .pool-row {
+  .pool-row,
+  .check-result {
     grid-template-columns: 1fr;
   }
 
   .pool-owner {
     text-align: left;
+  }
+
+  .check-step-number {
+    justify-self: start;
+  }
+
+  .check-pair,
+  .check-command-fields {
+    grid-template-columns: 1fr;
   }
 }
