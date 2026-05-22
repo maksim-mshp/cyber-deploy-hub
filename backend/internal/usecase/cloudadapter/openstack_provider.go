@@ -124,23 +124,23 @@ func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) 
 			}
 		}
 		if instance.PortID != "" {
-			if err := deletePort(cleanupCtx, services.Network, instance.PortID); err != nil {
+			if err := deletePort(cleanupCtx, services.Network, instance.PortID, p.deletePollInterval); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete port %s: %w", instance.PortID, err))
 			}
 		}
 	}
 	if deployment.KeyPairName != "" {
-		if err := keypairs.Delete(cleanupCtx, services.Compute, deployment.KeyPairName, nil).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		if err := deleteKeyPair(cleanupCtx, services.Compute, deployment.KeyPairName, p.deletePollInterval); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete keypair %s: %w", deployment.KeyPairName, err))
 		}
 	}
 	if deployment.SubnetID != "" {
-		if err := deleteSubnet(cleanupCtx, services.Network, deployment.SubnetID); err != nil {
+		if err := deleteSubnet(cleanupCtx, services.Network, deployment.SubnetID, p.deletePollInterval); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete subnet %s: %w", deployment.SubnetID, err))
 		}
 	}
 	if deployment.NetworkID != "" {
-		if err := deleteNetwork(cleanupCtx, services.Network, deployment.NetworkID); err != nil {
+		if err := deleteNetwork(cleanupCtx, services.Network, deployment.NetworkID, p.deletePollInterval); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete network %s: %w", deployment.NetworkID, err))
 		}
 	}
@@ -397,10 +397,57 @@ func deleteVolume(ctx context.Context, block *gophercloud.ServiceClient, volumeI
 	if err := volumes.Delete(ctx, block, volumeID, volumes.DeleteOpts{Cascade: true}).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
 		return err
 	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := volumes.Get(ctx, block, volumeID).Extract()
+		return err
+	})
+}
+
+func deleteKeyPair(ctx context.Context, compute *gophercloud.ServiceClient, keyPairName string, interval time.Duration) error {
+	if err := keypairs.Delete(ctx, compute, keyPairName, nil).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := keypairs.Get(ctx, compute, keyPairName, nil).Extract()
+		return err
+	})
+}
+
+func deletePort(ctx context.Context, network *gophercloud.ServiceClient, portID string, interval time.Duration) error {
+	if err := ports.Delete(ctx, network, portID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := ports.Get(ctx, network, portID).Extract()
+		return err
+	})
+}
+
+func deleteSubnet(ctx context.Context, network *gophercloud.ServiceClient, subnetID string, interval time.Duration) error {
+	if err := subnets.Delete(ctx, network, subnetID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := subnets.Get(ctx, network, subnetID).Extract()
+		return err
+	})
+}
+
+func deleteNetwork(ctx context.Context, network *gophercloud.ServiceClient, networkID string, interval time.Duration) error {
+	if err := networks.Delete(ctx, network, networkID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := networks.Get(ctx, network, networkID).Extract()
+		return err
+	})
+}
+
+func waitDeleted(ctx context.Context, interval time.Duration, getErr func(context.Context) error) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		_, err := volumes.Get(ctx, block, volumeID).Extract()
+		err := getErr(ctx)
 		if gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
 			return nil
 		}
@@ -413,27 +460,6 @@ func deleteVolume(ctx context.Context, block *gophercloud.ServiceClient, volumeI
 		case <-ticker.C:
 		}
 	}
-}
-
-func deletePort(ctx context.Context, network *gophercloud.ServiceClient, portID string) error {
-	if err := ports.Delete(ctx, network, portID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
-		return err
-	}
-	return nil
-}
-
-func deleteSubnet(ctx context.Context, network *gophercloud.ServiceClient, subnetID string) error {
-	if err := subnets.Delete(ctx, network, subnetID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
-		return err
-	}
-	return nil
-}
-
-func deleteNetwork(ctx context.Context, network *gophercloud.ServiceClient, networkID string) error {
-	if err := networks.Delete(ctx, network, networkID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
-		return err
-	}
-	return nil
 }
 
 func firstAttachedVolumeID(server *servers.Server) string {

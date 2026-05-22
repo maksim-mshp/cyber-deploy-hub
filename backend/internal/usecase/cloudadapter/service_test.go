@@ -131,6 +131,36 @@ func TestServiceCleanupWithoutDeploymentStillEmitsCleaned(t *testing.T) {
 	}
 }
 
+func TestServiceCleanupFailurePersistsReasonAndEmitsFailure(t *testing.T) {
+	repo := &fakeRepository{
+		hasDeployment: true,
+		deployment: Deployment{
+			LabRunID:  "11111111-1111-4111-8111-111111111111",
+			ProjectID: "project-1",
+			Instances: []Instance{{
+				Name:     "vm-1",
+				ServerID: "server-1",
+			}},
+		},
+	}
+	service := newTestService(t, &fakeProvider{cleanupErr: errors.New("delete server server-1: timeout")}, repo, StaticEncryptor{Secret: EncryptedSecret{Ciphertext: []byte("cipher")}}, nil)
+	envelope := testEnvelope(t, commands.CloudCleanupLabV1, commands.CloudCleanupLabV1Payload{
+		LabRunID:  "11111111-1111-4111-8111-111111111111",
+		ProjectID: "project-1",
+		Reason:    "test",
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if repo.cleanupFailureReason != "delete server server-1: timeout" {
+		t.Fatalf("cleanup reason = %q", repo.cleanupFailureReason)
+	}
+	if repo.event.MessageType != events.CloudCleanupFailedV1.String() || repo.event.Error == nil || repo.event.Error.Code != "CLOUD_CLEANUP_FAILED" {
+		t.Fatalf("failure event = %#v", repo.event)
+	}
+}
+
 type fakeProvider struct {
 	deployResult DeployResult
 	deployErr    error
@@ -151,13 +181,14 @@ func (p *fakeProvider) Cleanup(_ context.Context, deployment Deployment) error {
 }
 
 type fakeRepository struct {
-	savedSuccess    DeployRequest
-	savedFailure    DeployRequest
-	failureResult   DeployResult
-	deployment      Deployment
-	hasDeployment   bool
-	cleanedLabRunID string
-	event           contracts.Envelope
+	savedSuccess         DeployRequest
+	savedFailure         DeployRequest
+	failureResult        DeployResult
+	deployment           Deployment
+	hasDeployment        bool
+	cleanedLabRunID      string
+	cleanupFailureReason string
+	event                contracts.Envelope
 }
 
 func (r *fakeRepository) SaveDeploySuccess(_ context.Context, _ contracts.Envelope, req DeployRequest, _ DeployResult, _ EncryptedSecret, event contracts.Envelope) error {
@@ -183,8 +214,9 @@ func (r *fakeRepository) SaveCleanupSuccess(_ context.Context, _ contracts.Envel
 	return nil
 }
 
-func (r *fakeRepository) SaveCleanupFailure(_ context.Context, _ contracts.Envelope, labRunID string, _ string, event contracts.Envelope) error {
+func (r *fakeRepository) SaveCleanupFailure(_ context.Context, _ contracts.Envelope, labRunID string, reason string, event contracts.Envelope) error {
 	r.cleanedLabRunID = labRunID
+	r.cleanupFailureReason = reason
 	r.event = event
 	return nil
 }
