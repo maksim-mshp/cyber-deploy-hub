@@ -43,5 +43,63 @@
         "timeout_seconds": 10
       }
     ]
+  },
+  {
+    "id": "lab-3-storage",
+    "name": "Lab 3 storage baseline",
+    "ssh_user": "ubuntu",
+    "steps": [
+      {
+        "name": "OS release file exists",
+        "type": "file_exists",
+        "path": "/etc/os-release",
+        "timeout_seconds": 10
+      },
+      {
+        "name": "Linux distribution is supported",
+        "type": "command_exit_code",
+        "command": "grep -Eq '^(ID=ubuntu|ID=debian)' /etc/os-release",
+        "expected_exit_code": 0,
+        "timeout_seconds": 10
+      },
+      {
+        "name": "SSH server package installed",
+        "type": "package_installed",
+        "package": "openssh-server",
+        "timeout_seconds": 15
+      },
+      {
+        "name": "SSH daemon config exists",
+        "type": "file_exists",
+        "path": "/etc/ssh/sshd_config",
+        "timeout_seconds": 10
+      },
+      {
+        "name": "SSH service active",
+        "type": "service_active",
+        "service": "ssh",
+        "timeout_seconds": 15
+      },
+      {
+        "name": "SSH port listening",
+        "type": "port_open",
+        "port": 22,
+        "timeout_seconds": 10
+      },
+      {
+        "name": "Root filesystem has at least 10 GiB",
+        "type": "command_exit_code",
+        "command": "df -BG / | awk 'NR==2 {gsub(\"G\", \"\", $2); exit !($2 >= 10)}'",
+        "expected_exit_code": 0,
+        "timeout_seconds": 10
+      },
+      {
+        "name": "Root filesystem is mounted",
+        "type": "command_exit_code",
+        "command": "findmnt -n / >/dev/null",
+        "expected_exit_code": 0,
+        "timeout_seconds": 10
+      }
+    ]
   }
 ]
