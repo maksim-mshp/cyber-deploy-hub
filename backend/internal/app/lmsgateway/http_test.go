@@ -219,6 +219,72 @@ func TestLTILaunchIssuesStudentSessionCookieAndRedirects(t *testing.T) {
 	}
 }
 
+func TestLTISessionCookieUsesConfiguredBrowserPolicy(t *testing.T) {
+	server, _ := testServerWithAuthConfig(t, &testLMSRepository{}, nil, authn.Config{
+		SessionSecret:  "0123456789abcdef",
+		SessionTTL:     time.Hour,
+		CookieSecure:   true,
+		CookieSameSite: "none",
+		CookieDomain:   ".example.com",
+	})
+
+	cookie := server.sessionCookie("token", time.Now().Add(time.Hour))
+
+	if cookie.SameSite != http.SameSiteNoneMode {
+		t.Fatalf("same_site = %v", cookie.SameSite)
+	}
+	if !cookie.Secure {
+		t.Fatal("cookie must be secure")
+	}
+	if cookie.Domain != ".example.com" {
+		t.Fatalf("domain = %q", cookie.Domain)
+	}
+}
+
+func TestLTIToolConfigurationUsesPublicBaseURL(t *testing.T) {
+	lti, err := NewLTIService(LTIConfig{
+		PlatformIssuer:   "https://moodle.example",
+		ClientID:         "client-1",
+		AuthLoginURL:     "https://moodle.example/mod/lti/auth.php",
+		JWKSURL:          "https://moodle.example/mod/lti/certs.php",
+		PublicBaseURL:    "https://hub.example/lms",
+		DeploymentIDs:    []string{"deployment-1"},
+		StateSecret:      "0123456789abcdef",
+		AllowedClockSkew: time.Minute,
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewLTIService: %v", err)
+	}
+	server, _ := testServerWithLTI(t, &testLMSRepository{}, lti)
+	req := httptest.NewRequest(http.MethodGet, "http://internal/lti/1p3/tool-configuration", nil)
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		OIDCLoginURL  string   `json:"oidc_login_url"`
+		TargetLinkURI string   `json:"target_link_uri"`
+		RedirectURIs  []string `json:"redirect_uris"`
+		LaunchURL     string   `json:"launch_url"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	wantLaunch := "https://hub.example/lms/lti/1p3/launch"
+	if payload.TargetLinkURI != wantLaunch || payload.LaunchURL != wantLaunch {
+		t.Fatalf("launch urls = %#v", payload)
+	}
+	if len(payload.RedirectURIs) != 1 || payload.RedirectURIs[0] != wantLaunch {
+		t.Fatalf("redirect_uris = %#v", payload.RedirectURIs)
+	}
+	if payload.OIDCLoginURL != "https://hub.example/lms/lti/1p3/login" {
+		t.Fatalf("oidc_login_url = %q", payload.OIDCLoginURL)
+	}
+}
+
 func TestLTIClaimsKeepMoodleCourseAndUseCustomLocalLab(t *testing.T) {
 	req, err := ltiClaims{
 		Issuer:  "https://moodle.example",
@@ -256,6 +322,13 @@ func testServer(t *testing.T, repo *testLMSRepository) (*Server, *authn.Service)
 }
 
 func testServerWithLTI(t *testing.T, repo *testLMSRepository, lti *LTIService) (*Server, *authn.Service) {
+	return testServerWithAuthConfig(t, repo, lti, authn.Config{
+		SessionSecret: "0123456789abcdef",
+		SessionTTL:    time.Hour,
+	})
+}
+
+func testServerWithAuthConfig(t *testing.T, repo *testLMSRepository, lti *LTIService, authConfig authn.Config) (*Server, *authn.Service) {
 	t.Helper()
 
 	mapper, err := lmsusecase.NewMapper(`{"course-ext":"course-3"}`, `{"assignment-ext":"lab-3"}`)
@@ -277,10 +350,7 @@ func testServerWithLTI(t *testing.T, repo *testLMSRepository, lti *LTIService) (
 	if err != nil {
 		t.Fatalf("NewAuthenticator: %v", err)
 	}
-	sessionAuth, err := authn.NewService(authn.Config{
-		SessionSecret: "0123456789abcdef",
-		SessionTTL:    time.Hour,
-	})
+	sessionAuth, err := authn.NewService(authConfig)
 	if err != nil {
 		t.Fatalf("NewAuthService: %v", err)
 	}

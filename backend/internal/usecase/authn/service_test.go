@@ -2,6 +2,7 @@ package authn
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -71,5 +72,37 @@ func TestServiceLoginWithBcryptPasswordHash(t *testing.T) {
 	}
 	if result.User.Role != RoleTeacher || result.User.Subject != "teacher" {
 		t.Fatalf("user = %#v", result.User)
+	}
+}
+
+func TestServiceCookiePolicy(t *testing.T) {
+	service, err := NewService(Config{
+		SessionSecret:  "0123456789abcdef",
+		CookieSecure:   true,
+		CookieSameSite: "none",
+		CookieDomain:   ".example.com",
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if !service.CookieSecure() {
+		t.Fatal("cookie must be secure")
+	}
+	if service.CookieSameSite() != http.SameSiteNoneMode {
+		t.Fatalf("same_site = %v", service.CookieSameSite())
+	}
+	if service.CookieDomain() != ".example.com" {
+		t.Fatalf("domain = %q", service.CookieDomain())
+	}
+}
+
+func TestServiceRejectsSameSiteNoneWithoutSecureCookie(t *testing.T) {
+	_, err := NewService(Config{
+		SessionSecret:  "0123456789abcdef",
+		CookieSameSite: "none",
+	})
+	if err == nil {
+		t.Fatal("expected SameSite=None without Secure to be rejected")
 	}
 }

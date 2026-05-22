@@ -76,6 +76,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		SessionTTL:     cfg.Auth.SessionTTL,
 		CookieName:     cfg.Auth.CookieName,
 		CookieSecure:   cfg.Auth.CookieSecure,
+		CookieSameSite: cfg.Auth.CookieSameSite,
+		CookieDomain:   cfg.Auth.CookieDomain,
 		LocalUsersJSON: cfg.Auth.LocalUsersJSON,
 	})
 	if err != nil {

@@ -71,6 +71,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		SessionTTL:     cfg.Auth.SessionTTL,
 		CookieName:     cfg.Auth.CookieName,
 		CookieSecure:   cfg.Auth.CookieSecure,
+		CookieSameSite: cfg.Auth.CookieSameSite,
+		CookieDomain:   cfg.Auth.CookieDomain,
 		LocalUsersJSON: cfg.Auth.LocalUsersJSON,
 	})
 	if err != nil {
@@ -85,6 +87,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ClientID:         cfg.LMS.LTIClientID,
 		AuthLoginURL:     cfg.LMS.LTIAuthLoginURL,
 		JWKSURL:          cfg.LMS.LTIJWKSURL,
+		PublicBaseURL:    cfg.LMS.LTIPublicBaseURL,
 		RedirectURL:      cfg.LMS.LTIRedirectURL,
 		DeploymentIDs:    splitDeploymentIDs(cfg.LMS.LTIDeploymentIDs),
 		StateSecret:      cfg.Auth.SessionSecret,

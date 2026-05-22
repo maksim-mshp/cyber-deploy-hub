@@ -185,11 +185,12 @@ func (s *Server) sessionCookie(token string, expiresAt time.Time) *http.Cookie {
 	return &http.Cookie{
 		Name:     s.sessionAuth.CookieName(),
 		Value:    token,
+		Domain:   s.sessionAuth.CookieDomain(),
 		Path:     "/",
 		Expires:  expiresAt,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: s.sessionAuth.CookieSameSite(),
 		Secure:   s.sessionAuth.CookieSecure(),
 	}
 }

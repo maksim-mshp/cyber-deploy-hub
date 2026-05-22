@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type Config struct {
 	SessionTTL     time.Duration
 	CookieName     string
 	CookieSecure   bool
+	CookieSameSite string
+	CookieDomain   string
 	LocalUsersJSON string
 }
 
@@ -56,12 +59,14 @@ type LoginResult struct {
 }
 
 type Service struct {
-	users         map[string]LocalUser
-	sessionSecret []byte
-	sessionTTL    time.Duration
-	cookieName    string
-	cookieSecure  bool
-	now           func() time.Time
+	users          map[string]LocalUser
+	sessionSecret  []byte
+	sessionTTL     time.Duration
+	cookieName     string
+	cookieSecure   bool
+	cookieSameSite http.SameSite
+	cookieDomain   string
+	now            func() time.Time
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -77,17 +82,26 @@ func NewService(cfg Config) (*Service, error) {
 	if ttl <= 0 {
 		ttl = 8 * time.Hour
 	}
+	sameSite, err := parseCookieSameSite(cfg.CookieSameSite)
+	if err != nil {
+		return nil, err
+	}
+	if sameSite == http.SameSiteNoneMode && !cfg.CookieSecure {
+		return nil, errors.New("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAME_SITE=none")
+	}
 	users, err := parseLocalUsers(cfg.LocalUsersJSON)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		users:         users,
-		sessionSecret: []byte(secret),
-		sessionTTL:    ttl,
-		cookieName:    cookieName,
-		cookieSecure:  cfg.CookieSecure,
-		now:           time.Now,
+		users:          users,
+		sessionSecret:  []byte(secret),
+		sessionTTL:     ttl,
+		cookieName:     cookieName,
+		cookieSecure:   cfg.CookieSecure,
+		cookieSameSite: sameSite,
+		cookieDomain:   strings.TrimSpace(cfg.CookieDomain),
+		now:            time.Now,
 	}, nil
 }
 
@@ -100,6 +114,20 @@ func (s *Service) CookieName() string {
 
 func (s *Service) CookieSecure() bool {
 	return s != nil && s.cookieSecure
+}
+
+func (s *Service) CookieSameSite() http.SameSite {
+	if s == nil || s.cookieSameSite == 0 {
+		return http.SameSiteLaxMode
+	}
+	return s.cookieSameSite
+}
+
+func (s *Service) CookieDomain() string {
+	if s == nil {
+		return ""
+	}
+	return s.cookieDomain
 }
 
 func (s *Service) Login(_ context.Context, req LoginRequest) (LoginResult, error) {
@@ -249,6 +277,21 @@ func (u LocalUser) displayName() string {
 		return u.DisplayName
 	}
 	return u.Username
+}
+
+func parseCookieSameSite(raw string) (http.SameSite, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "lax":
+		return http.SameSiteLaxMode, nil
+	case "strict":
+		return http.SameSiteStrictMode, nil
+	case "none":
+		return http.SameSiteNoneMode, nil
+	case "default":
+		return http.SameSiteDefaultMode, nil
+	default:
+		return 0, fmt.Errorf("unsupported AUTH_COOKIE_SAME_SITE %q", raw)
+	}
 }
 
 func validateRole(role string) error {

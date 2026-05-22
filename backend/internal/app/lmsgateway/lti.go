@@ -41,6 +41,7 @@ type LTIConfig struct {
 	ClientID         string
 	AuthLoginURL     string
 	JWKSURL          string
+	PublicBaseURL    string
 	RedirectURL      string
 	DeploymentIDs    []string
 	StateSecret      string
@@ -52,6 +53,7 @@ type LTIService struct {
 	clientID       string
 	authLoginURL   string
 	jwksURL        string
+	publicBaseURL  string
 	redirectURL    string
 	deployments    map[string]struct{}
 	stateSecret    []byte
@@ -69,6 +71,7 @@ func NewLTIService(cfg LTIConfig, client *http.Client) (*LTIService, error) {
 	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
 	cfg.AuthLoginURL = strings.TrimSpace(cfg.AuthLoginURL)
 	cfg.JWKSURL = strings.TrimSpace(cfg.JWKSURL)
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 	cfg.RedirectURL = strings.TrimSpace(cfg.RedirectURL)
 	cfg.StateSecret = strings.TrimSpace(cfg.StateSecret)
 
@@ -76,6 +79,7 @@ func NewLTIService(cfg LTIConfig, client *http.Client) (*LTIService, error) {
 		cfg.ClientID != "" ||
 		cfg.AuthLoginURL != "" ||
 		cfg.JWKSURL != "" ||
+		cfg.PublicBaseURL != "" ||
 		cfg.RedirectURL != "" ||
 		len(cfg.DeploymentIDs) > 0
 	if !configured {
@@ -92,6 +96,12 @@ func NewLTIService(cfg LTIConfig, client *http.Client) (*LTIService, error) {
 	}
 	if cfg.JWKSURL == "" {
 		return nil, errors.New("LTI_JWKS_URL is required when LTI is configured")
+	}
+	if cfg.PublicBaseURL != "" {
+		parsed, err := url.Parse(cfg.PublicBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, errors.New("LTI_PUBLIC_BASE_URL must be an absolute URL")
+		}
 	}
 	if len(cfg.StateSecret) < 16 {
 		return nil, errors.New("AUTH_SESSION_SECRET must contain at least 16 characters for LTI state signing")
@@ -114,6 +124,7 @@ func NewLTIService(cfg LTIConfig, client *http.Client) (*LTIService, error) {
 		clientID:       cfg.ClientID,
 		authLoginURL:   cfg.AuthLoginURL,
 		jwksURL:        cfg.JWKSURL,
+		publicBaseURL:  cfg.PublicBaseURL,
 		redirectURL:    cfg.RedirectURL,
 		deployments:    deployments,
 		stateSecret:    []byte(cfg.StateSecret),
@@ -222,6 +233,9 @@ func (s *Server) handleLTIToolConfiguration(w http.ResponseWriter, r *http.Reque
 	status := "configured"
 	if s.lti == nil {
 		status = "disabled"
+	} else {
+		launchURL = s.lti.launchURL(r)
+		loginURL = s.lti.loginURL(r)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issuer":                  "cyber-deploy-hub",
@@ -245,7 +259,7 @@ func (l *LTIService) loginRedirectURL(r *http.Request, iss string, clientID stri
 	}
 	redirectURI := l.redirectURL
 	if redirectURI == "" {
-		redirectURI = absoluteURL(r, "/lti/1p3/launch")
+		redirectURI = l.launchURL(r)
 	}
 	nonce, err := randomToken(24)
 	if err != nil {
@@ -497,6 +511,69 @@ func (c ltiClaims) launchRequest() (lmsusecase.LaunchRequest, error) {
 		LabID:              labID,
 		IdempotencyKey:     idempotencyKey,
 	}, nil
+}
+
+func (l *LTIService) launchURL(r *http.Request) string {
+	if l == nil {
+		return absoluteURL(r, "/lti/1p3/launch")
+	}
+	if l.redirectURL != "" {
+		return l.redirectURL
+	}
+	return l.publicURL(r, "/lti/1p3/launch")
+}
+
+func (l *LTIService) loginURL(r *http.Request) string {
+	if l == nil {
+		return absoluteURL(r, "/lti/1p3/login")
+	}
+	if l.publicBaseURL != "" {
+		return publicURLFromBase(l.publicBaseURL, "/lti/1p3/login")
+	}
+	if l.redirectURL != "" {
+		return loginURLFromLaunchURL(l.redirectURL)
+	}
+	return absoluteURL(r, "/lti/1p3/login")
+}
+
+func (l *LTIService) publicURL(r *http.Request, path string) string {
+	if l != nil && l.publicBaseURL != "" {
+		return publicURLFromBase(l.publicBaseURL, path)
+	}
+	return absoluteURL(r, path)
+}
+
+func publicURLFromBase(rawBase string, path string) string {
+	parsed, err := url.Parse(rawBase)
+	if err != nil {
+		return path
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	suffix := "/" + strings.TrimLeft(path, "/")
+	if basePath == "" {
+		parsed.Path = suffix
+	} else {
+		parsed.Path = basePath + suffix
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func loginURLFromLaunchURL(rawLaunchURL string) string {
+	parsed, err := url.Parse(rawLaunchURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "/lti/1p3/login"
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if strings.HasSuffix(path, "/launch") {
+		parsed.Path = strings.TrimSuffix(path, "/launch") + "/login"
+	} else {
+		parsed.Path = "/lti/1p3/login"
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func absoluteURL(r *http.Request, path string) string {

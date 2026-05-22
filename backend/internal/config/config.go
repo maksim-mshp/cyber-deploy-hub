@@ -130,6 +130,7 @@ type LMSConfig struct {
 	LTIClientID       string        `env:"LTI_CLIENT_ID"`
 	LTIAuthLoginURL   string        `env:"LTI_AUTH_LOGIN_URL"`
 	LTIJWKSURL        string        `env:"LTI_JWKS_URL"`
+	LTIPublicBaseURL  string        `env:"LTI_PUBLIC_BASE_URL"`
 	LTIRedirectURL    string        `env:"LTI_REDIRECT_URL"`
 	LTIDeploymentIDs  string        `env:"LTI_DEPLOYMENT_IDS"`
 }
@@ -139,6 +140,8 @@ type AuthConfig struct {
 	SessionTTL     time.Duration `env:"AUTH_SESSION_TTL" envDefault:"8h"`
 	CookieName     string        `env:"AUTH_COOKIE_NAME" envDefault:"cdh_session"`
 	CookieSecure   bool          `env:"AUTH_COOKIE_SECURE" envDefault:"false"`
+	CookieSameSite string        `env:"AUTH_COOKIE_SAME_SITE" envDefault:"lax"`
+	CookieDomain   string        `env:"AUTH_COOKIE_DOMAIN"`
 	FrontendURL    string        `env:"AUTH_FRONTEND_URL" envDefault:"/"`
 	LocalUsersJSON string        `env:"AUTH_LOCAL_USERS_JSON"`
 }

@@ -165,10 +165,11 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{
 			Name:     s.auth.CookieName(),
 			Value:    "",
+			Domain:   s.auth.CookieDomain(),
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+			SameSite: s.auth.CookieSameSite(),
 			Secure:   s.auth.CookieSecure(),
 		})
 	}
@@ -742,11 +743,12 @@ func (s *Server) sessionCookie(token string, expiresAt time.Time) *http.Cookie {
 	return &http.Cookie{
 		Name:     s.auth.CookieName(),
 		Value:    token,
+		Domain:   s.auth.CookieDomain(),
 		Path:     "/",
 		Expires:  expiresAt,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: s.auth.CookieSameSite(),
 		Secure:   s.auth.CookieSecure(),
 	}
 }

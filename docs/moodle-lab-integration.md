@@ -27,13 +27,17 @@ LTI_PLATFORM_ISSUER=...
 LTI_CLIENT_ID=...
 LTI_AUTH_LOGIN_URL=...
 LTI_JWKS_URL=...
+LTI_PUBLIC_BASE_URL=https://YOUR_PUBLIC_LMS_GATEWAY
 LTI_REDIRECT_URL=https://YOUR_PUBLIC_LMS_GATEWAY/lti/1p3/launch
 LTI_DEPLOYMENT_IDS=...
 AUTH_FRONTEND_URL=https://YOUR_PUBLIC_CYBER_DEPLOY_HUB
 AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_SAME_SITE=none
+AUTH_COOKIE_DOMAIN=.YOUR_PUBLIC_DOMAIN
 ```
 
 Если Moodle находится на другом сервере, нельзя указывать `127.0.0.1` или локальные адреса контейнеров.
+Для запуска во встроенном iframe нужен HTTPS и cookie `SameSite=None; Secure`; иначе браузер не отправит сессию Cyber Deploy Hub из страницы Moodle.
 
 ## 2. Создать конфигурацию лабораторной в Cyber Deploy Hub
 
