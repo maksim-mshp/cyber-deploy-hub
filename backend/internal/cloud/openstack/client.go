@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gophercloud/gophercloud/v2"
 	gcopenstack "github.com/gophercloud/gophercloud/v2/openstack"
 	blocklimits "github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/limits"
@@ -96,6 +97,7 @@ func (c *Client) ProjectQuota(ctx context.Context, projectID string) (*ProjectQu
 	if err != nil {
 		return nil, err
 	}
+	projectID = normalizeProjectID(projectID)
 
 	compute, err := computelimits.Get(ctx, services.Compute, computelimits.GetOpts{TenantID: projectID}).Extract()
 	if err != nil {
@@ -178,6 +180,7 @@ func (c *Client) provider(ctx context.Context, cfg config.OpenStackConfig) (*gop
 	if !cfg.Configured() {
 		return nil, errors.New("openstack credentials are not configured")
 	}
+	cfg.ProjectID = normalizeProjectID(cfg.ProjectID)
 
 	provider, err := gcopenstack.NewClient(cfg.AuthURL)
 	if err != nil {
@@ -209,7 +212,7 @@ func (c *Client) provider(ctx context.Context, cfg config.OpenStackConfig) (*gop
 }
 
 func (c *Client) projectScopedConfig(projectID string) (config.OpenStackConfig, error) {
-	projectID = strings.TrimSpace(projectID)
+	projectID = normalizeProjectID(projectID)
 	if projectID == "" {
 		return config.OpenStackConfig{}, errors.New("openstack project_id is required")
 	}
@@ -242,6 +245,14 @@ func (c *Client) transport() http.RoundTripper {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- enabled only by explicit OS_INSECURE for isolated lab stands.
 	}
 	return transport
+}
+
+func normalizeProjectID(projectID string) string {
+	trimmed := strings.TrimSpace(projectID)
+	if _, err := uuid.Parse(trimmed); err != nil {
+		return trimmed
+	}
+	return strings.ReplaceAll(trimmed, "-", "")
 }
 
 func limitFree(maximum int, used int) int {
