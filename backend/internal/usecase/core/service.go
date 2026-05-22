@@ -100,7 +100,7 @@ func (s *Service) Handle(ctx context.Context, envelope contracts.Envelope) error
 	case events.CloudLabCleanedV1.String():
 		return s.handleCloudLabCleaned(ctx, envelope)
 	case events.CloudCleanupFailedV1.String():
-		return s.failFromEvent(ctx, envelope, "CLOUD_CLEANUP_FAILED", "cloud cleanup failed", []domain.LabRunState{domain.LabRunCleaning, domain.LabRunFailed})
+		return s.handleCloudCleanupFailed(ctx, envelope)
 	case events.ProjectReleasedV1.String():
 		return s.handleProjectReleased(ctx, envelope)
 	case events.CheckerCompletedV1.String():
@@ -459,6 +459,45 @@ func (s *Service) handleCloudLabCleaned(ctx context.Context, envelope contracts.
 		Message:        envelope,
 		ExpectedStates: []domain.LabRunState{domain.LabRunCleaning, domain.LabRunFailed},
 		Next:           []contracts.Envelope{next},
+	})
+}
+
+func (s *Service) handleCloudCleanupFailed(ctx context.Context, envelope contracts.Envelope) error {
+	labRunID, message := failureFromEnvelope(envelope, "cloud cleanup failed")
+	if labRunID == "" {
+		return fmt.Errorf("failed event %s does not include lab_run_id", envelope.MessageType)
+	}
+
+	failed, err := s.failureEvent(envelope, labRunID, "CLOUD_CLEANUP_FAILED", message)
+	if err != nil {
+		return err
+	}
+	next := []contracts.Envelope{failed}
+
+	labRun, err := s.repo.LoadLabRun(ctx, labRunID)
+	if err != nil {
+		return err
+	}
+	if labRun.ProjectID != "" {
+		release, err := s.newCommand(envelope, commands.ProjectReleaseV1, commands.ProjectReleaseV1Payload{
+			LabRunID:  labRunID,
+			ProjectID: labRun.ProjectID,
+			Reason:    "cleanup_failed",
+		})
+		if err != nil {
+			return err
+		}
+		next = append(next, release)
+	}
+
+	return s.repo.Fail(ctx, Failure{
+		LabRunID:       labRunID,
+		Code:           "CLOUD_CLEANUP_FAILED",
+		Message:        message,
+		StepName:       envelope.MessageType,
+		Event:          envelope,
+		ExpectedStates: []domain.LabRunState{domain.LabRunCleaning, domain.LabRunFailed},
+		Next:           next,
 	})
 }
 

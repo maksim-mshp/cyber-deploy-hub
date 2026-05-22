@@ -243,6 +243,39 @@ func TestServiceCleansCloudAfterDeployFailure(t *testing.T) {
 	}
 }
 
+func TestServiceQuarantinesProjectWhenCloudCleanupFails(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunCleaning,
+		},
+	}
+	service := NewService("core-service", repo)
+	envelope := testEnvelope(t, contracts.MessageKindEvent, events.CloudCleanupFailedV1, events.FailurePayload{
+		LabRunID: "lab-1",
+		Code:     "OPENSTACK_ERROR",
+		Message:  "delete network timeout",
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	failure := repo.lastFailure(t)
+	if failure.Code != "CLOUD_CLEANUP_FAILED" {
+		t.Fatalf("failure code = %q", failure.Code)
+	}
+	if got := messageTypes(failure.Next); !sameStrings(got, []string{events.LabFailedV1.String(), commands.ProjectReleaseV1.String()}) {
+		t.Fatalf("next message types = %#v", got)
+	}
+	var release commands.ProjectReleaseV1Payload
+	decodeTestPayload(t, failure.Next[1], &release)
+	if release.ProjectID != "project-1" || release.Reason != "cleanup_failed" {
+		t.Fatalf("project release = %#v", release)
+	}
+}
+
 func TestServiceIgnoresDeployFailureAfterCleanupStarted(t *testing.T) {
 	repo := &fakeRepository{
 		labRun: LabRun{
