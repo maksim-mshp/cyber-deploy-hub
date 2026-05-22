@@ -371,9 +371,7 @@ func (s *Service) handleVDIAccessIssued(ctx context.Context, envelope contracts.
 	}
 
 	schedule, err := s.newCommand(envelope, commands.LifecycleScheduleCleanupV1, commands.LifecycleScheduleCleanupV1Payload{
-		LabRunID:      payload.LabRunID,
-		TTLSeconds:    2 * 60 * 60,
-		FreezeSeconds: 24 * 60 * 60,
+		LabRunID: payload.LabRunID,
 	})
 	if err != nil {
 		return err

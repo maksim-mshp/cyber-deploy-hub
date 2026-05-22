@@ -208,6 +208,11 @@ func TestServiceSchedulesCleanupWhenVDIAccessIssued(t *testing.T) {
 	if got := messageTypes(transition.Next); !sameStrings(got, []string{commands.LifecycleScheduleCleanupV1.String(), events.LabReadyV1.String()}) {
 		t.Fatalf("next message types = %#v", got)
 	}
+	var schedulePayload commands.LifecycleScheduleCleanupV1Payload
+	decodeTestPayload(t, transition.Next[0], &schedulePayload)
+	if schedulePayload.TTLSeconds != 0 || schedulePayload.FreezeSeconds != 0 {
+		t.Fatalf("schedule must defer TTL to lifecycle settings, got %#v", schedulePayload)
+	}
 }
 
 func TestServiceCleansCloudAfterDeployFailure(t *testing.T) {
