@@ -75,6 +75,7 @@ type ProjectPoolItem struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
 	DomainID            string `json:"domain_id"`
+	CourseID            string `json:"course_id"`
 	State               string `json:"state"`
 	CurrentLabRunID     string `json:"current_lab_run_id,omitempty"`
 	ReservedByStudentID string `json:"reserved_by_student_id,omitempty"`

@@ -400,14 +400,16 @@ func (r *PostgresReader) GetSettings(ctx context.Context) (SettingsView, error) 
 
 func (r *PostgresReader) GetProjectPool(ctx context.Context) (ProjectPoolView, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id::text,
-       name,
-       domain_id,
-       state,
-       COALESCE(current_lab_run_id::text, ''),
-       COALESCE(reserved_by_student_id, '')
-FROM project_pool.ki_projects
-ORDER BY domain_id, name`)
+SELECT p.id::text,
+       p.name,
+       p.domain_id,
+       d.course_id,
+       p.state,
+       COALESCE(p.current_lab_run_id::text, ''),
+       COALESCE(p.reserved_by_student_id, '')
+FROM project_pool.ki_projects AS p
+JOIN project_pool.domains AS d ON d.domain_id = p.domain_id
+ORDER BY d.course_id, p.domain_id, p.name`)
 	if err != nil {
 		return ProjectPoolView{}, err
 	}
@@ -420,6 +422,7 @@ ORDER BY domain_id, name`)
 			&item.ID,
 			&item.Name,
 			&item.DomainID,
+			&item.CourseID,
 			&item.State,
 			&item.CurrentLabRunID,
 			&item.ReservedByStudentID,

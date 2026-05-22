@@ -51,6 +51,11 @@ const defaultRuntimeSettings = {
   capacity_threshold_percent: 90,
 }
 
+const emptyProjectPool = {
+  states: {},
+  projects: [],
+}
+
 let launchNoticeCache
 
 function App() {
@@ -354,6 +359,7 @@ function TeacherDashboard({ user }) {
   const [notice, setNotice] = useState('')
   const [catalogWarning, setCatalogWarning] = useState('')
   const [runtimeSettings, setRuntimeSettings] = useState(defaultRuntimeSettings)
+  const [projectPool, setProjectPool] = useState(emptyProjectPool)
   const [busy, setBusy] = useState(false)
 
   const activeRuns = useMemo(() => runs.filter((run) => activeStates.has(run.state)), [runs])
@@ -389,6 +395,7 @@ function TeacherDashboard({ user }) {
       return snapshot.runs.find((run) => activeStates.has(run.state))?.id || ''
     })
     setRuntimeSettings(snapshot.settings)
+    setProjectPool(snapshot.projectPool)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -571,6 +578,7 @@ function TeacherDashboard({ user }) {
       <section className="metrics-row">
         <Metric icon={Activity} label="Активные стенды" value={activeRuns.length} />
         <Metric icon={Server} label="Конфигурации" value={definitions.length} />
+        <Metric icon={Cloud} label="FREE projects" value={projectStateCount(projectPool.states, 'FREE')} />
         <Metric icon={Cloud} label="OpenStack images" value={images.length} />
       </section>
 
@@ -580,6 +588,8 @@ function TeacherDashboard({ user }) {
         onSave={saveRuntimeSettings}
         busy={busy}
       />
+
+      <ProjectPoolPanel pool={projectPool} />
 
       <div className="teacher-grid">
         <section className="panel">
@@ -672,6 +682,56 @@ function TeacherDashboard({ user }) {
         definitions={definitions}
       />
     </div>
+  )
+}
+
+function ProjectPoolPanel({ pool }) {
+  const projects = pool.projects ?? []
+  const states = pool.states ?? {}
+  const warning = projectPoolWarning(projects, states)
+  const visibleProjects = projects.slice(0, 8)
+
+  return (
+    <section className="panel project-pool-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Пул проектов КИ</h2>
+          <p>{projects.length} projects</p>
+        </div>
+        <div className="pool-stats" aria-label="Project pool states">
+          <span>
+            <strong>{projectStateCount(states, 'FREE')}</strong> FREE
+          </span>
+          <span>
+            <strong>{projectStateCount(states, 'ALLOCATED')}</strong> ALLOCATED
+          </span>
+          <span>
+            <strong>{projectStateCount(states, 'QUARANTINED')}</strong> QUARANTINED
+          </span>
+        </div>
+      </div>
+      {warning ? <p className="form-error">{warning}</p> : null}
+      <div className="pool-list">
+        {visibleProjects.map((project) => (
+          <div className="pool-row" key={project.id}>
+            <div>
+              <strong>{project.name}</strong>
+              <span>
+                {project.course_id || 'course?'} / {project.domain_id}
+              </span>
+              <span>{project.id}</span>
+            </div>
+            <StateBadge state={project.state} />
+            <div className="pool-owner">
+              <span>{project.reserved_by_student_id || 'free'}</span>
+              {project.current_lab_run_id ? <span>{shortID(project.current_lab_run_id)}</span> : null}
+            </div>
+          </div>
+        ))}
+        {projects.length === 0 ? <p className="empty">Пул проектов пуст</p> : null}
+        {projects.length > visibleProjects.length ? <p className="empty">Показаны первые {visibleProjects.length} проектов</p> : null}
+      </div>
+    </section>
   )
 }
 
@@ -997,15 +1057,20 @@ async function loadStudentSnapshot() {
 }
 
 async function loadTeacherSnapshot() {
-  const [teacherCatalog, labRuns, settings] = await Promise.all([
+  const [teacherCatalog, labRuns, settings, projectPool] = await Promise.all([
     requestJSON('/api/teacher/lab-definitions'),
     requestJSON('/api/labs?limit=100'),
     requestJSON('/api/admin/settings'),
+    requestJSON('/api/admin/project-pool'),
   ])
   return {
     definitions: teacherCatalog.labs ?? [],
     runs: labRuns.labs ?? [],
     settings: normalizeRuntimeSettings(settings.values),
+    projectPool: {
+      states: projectPool.states ?? {},
+      projects: projectPool.projects ?? [],
+    },
   }
 }
 
@@ -1121,6 +1186,30 @@ function validateRuntimeSettings(settings) {
     return 'Лимит кластера должен быть в диапазоне 1-100%'
   }
   return ''
+}
+
+function projectPoolWarning(projects, states) {
+  if (projects.length === 0) {
+    return 'Пул проектов КИ пуст: LTI запуск не сможет выделить изолированный project'
+  }
+  if (projectStateCount(states, 'FREE') === 0) {
+    return 'В пуле нет свободных проектов: новые LTI запуски будут отклонены'
+  }
+  if (projects.length === 1) {
+    return 'В пуле только один project: параллельные студенческие запуски быстро исчерпают емкость'
+  }
+  return ''
+}
+
+function projectStateCount(states, state) {
+  return Number(states?.[state] ?? 0)
+}
+
+function shortID(value) {
+  if (!value || value.length <= 14) {
+    return value
+  }
+  return `${value.slice(0, 8)}...${value.slice(-6)}`
 }
 
 function secondsToMinutes(value, fallback) {

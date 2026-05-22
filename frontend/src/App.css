@@ -386,6 +386,61 @@ textarea {
   margin-top: 16px;
 }
 
+.project-pool-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.pool-stats {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pool-stats span {
+  border: 1px solid #d8e0e5;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #42515d;
+  background: #f8fafb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pool-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pool-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(120px, 0.45fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d8e0e5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.pool-row div,
+.pool-owner {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pool-row span {
+  color: #607180;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pool-owner {
+  text-align: right;
+}
+
 .wide {
   grid-column: span 3;
 }
@@ -487,7 +542,12 @@ textarea {
   }
 
   .run-item,
-  .instance-row {
+  .instance-row,
+  .pool-row {
     grid-template-columns: 1fr;
+  }
+
+  .pool-owner {
+    text-align: left;
   }
 }
