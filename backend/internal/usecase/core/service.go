@@ -671,6 +671,7 @@ func cleanupAllowedStates() []domain.LabRunState {
 		domain.LabRunVerified,
 		domain.LabRunVerificationFailed,
 		domain.LabRunFrozen,
+		domain.LabRunFailed,
 	}
 }
 

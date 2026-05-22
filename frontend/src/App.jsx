@@ -286,7 +286,7 @@ function StudentDashboard({ user, initialNotice = '' }) {
   }
 
   async function finishLab() {
-    if (!selectedRun || terminalStates.has(selectedRun.state)) {
+    if (!selectedRun || selectedRun.state === 'FINISHED' || selectedRun.state === 'CLEANING') {
       return
     }
     setBusy(true)
@@ -852,7 +852,8 @@ function RuntimeSettingsPanel({ settings, onSave, busy }) {
 
 function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishing, compact = false }) {
   const readyInstances = instances.filter((item) => item.state === 'ACTIVE').length
-  const canFinish = !terminalStates.has(run.state) && run.state !== 'CLEANING'
+  const canFinish = run.state !== 'FINISHED' && run.state !== 'CLEANING'
+  const canUseActiveAction = !terminalStates.has(run.state) && run.state !== 'CLEANING'
 
   return (
     <section className={compact ? 'panel run-panel compact-run' : 'panel run-panel'}>
@@ -891,13 +892,13 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
       </div>
       <div className="action-row">
         {onCheck ? (
-          <button className="secondary-button" type="button" onClick={onCheck} disabled={finishing || !canFinish}>
+          <button className="secondary-button" type="button" onClick={onCheck} disabled={finishing || !canUseActiveAction}>
             <CheckCircle2 size={18} />
             Проверить
           </button>
         ) : null}
         {onFreeze ? (
-          <button className="secondary-button" type="button" onClick={onFreeze} disabled={finishing || !canFinish}>
+          <button className="secondary-button" type="button" onClick={onFreeze} disabled={finishing || !canUseActiveAction}>
             <CircleAlert size={18} />
             Поддержка
           </button>

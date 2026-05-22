@@ -343,6 +343,37 @@ func TestServiceIgnoresDeploySuccessAfterCleanupStarted(t *testing.T) {
 	}
 }
 
+func TestServiceRetriesCleanupForFailedLabRun(t *testing.T) {
+	repo := &fakeRepository{
+		labRun: LabRun{
+			ID:        "lab-1",
+			ProjectID: "project-1",
+			State:     domain.LabRunFailed,
+		},
+	}
+	service := NewService("core-service", repo)
+	envelope := testEnvelope(t, contracts.MessageKindCommand, commands.RequestCleanupV1, commands.LabRunCommandPayload{
+		LabRunID: "lab-1",
+		Reason:   "student_cleanup_retry",
+	})
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	transition := repo.lastTransition(t)
+	if transition.State != domain.LabRunCleaning {
+		t.Fatalf("state = %q", transition.State)
+	}
+	if got := messageTypes(transition.Next); !sameStrings(got, []string{
+		commands.VDIRevokeAccessV1.String(),
+		commands.CloudCleanupLabV1.String(),
+		commands.LifecycleCancelTimerV1.String(),
+	}) {
+		t.Fatalf("next message types = %#v", got)
+	}
+}
+
 type fakeRepository struct {
 	startedReq     commands.RequestProvisionV1Payload
 	startedCommand contracts.Envelope
