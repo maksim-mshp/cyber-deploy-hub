@@ -68,7 +68,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	openStackClient := openstack.NewClient(cfg.OpenStack)
-	if !openStackClient.Configured() {
+	if !openStackClient.CredentialsConfigured() {
 		return errors.New("real OpenStack provider is not configured")
 	}
 	if strings.TrimSpace(cfg.Cloud.PrivateSubnetID) == "" {

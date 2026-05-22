@@ -56,7 +56,11 @@ type OpenStackConfig struct {
 
 func (c OpenStackConfig) Configured() bool {
 	hasProject := c.ProjectID != "" || c.ProjectName != ""
-	return c.AuthURL != "" && c.Username != "" && c.Password != "" && hasProject
+	return c.CredentialsConfigured() && hasProject
+}
+
+func (c OpenStackConfig) CredentialsConfigured() bool {
+	return c.AuthURL != "" && c.Username != "" && c.Password != ""
 }
 
 type KIConfig struct {

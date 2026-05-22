@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/v2"
@@ -49,6 +50,10 @@ func NewClient(cfg config.OpenStackConfig) *Client {
 
 func (c *Client) Configured() bool {
 	return c.cfg.Configured()
+}
+
+func (c *Client) CredentialsConfigured() bool {
+	return c.cfg.CredentialsConfigured()
 }
 
 func (c *Client) Check(ctx context.Context) error {
@@ -109,13 +114,25 @@ func (c *Client) ProjectQuota(ctx context.Context, projectID string) (*ProjectQu
 }
 
 func (c *Client) Services(ctx context.Context) (*ServiceClients, error) {
-	provider, err := c.Provider(ctx)
+	return c.services(ctx, c.cfg)
+}
+
+func (c *Client) ServicesForProject(ctx context.Context, projectID string) (*ServiceClients, error) {
+	cfg, err := c.projectScopedConfig(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return c.services(ctx, cfg)
+}
+
+func (c *Client) services(ctx context.Context, cfg config.OpenStackConfig) (*ServiceClients, error) {
+	provider, err := c.provider(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	endpointOpts := gophercloud.EndpointOpts{
-		Region:       c.cfg.Region,
+		Region:       cfg.Region,
 		Availability: gophercloud.AvailabilityPublic,
 	}
 
@@ -146,11 +163,23 @@ func (c *Client) Services(ctx context.Context) (*ServiceClients, error) {
 }
 
 func (c *Client) Provider(ctx context.Context) (*gophercloud.ProviderClient, error) {
-	if !c.Configured() {
+	return c.provider(ctx, c.cfg)
+}
+
+func (c *Client) ProviderForProject(ctx context.Context, projectID string) (*gophercloud.ProviderClient, error) {
+	cfg, err := c.projectScopedConfig(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return c.provider(ctx, cfg)
+}
+
+func (c *Client) provider(ctx context.Context, cfg config.OpenStackConfig) (*gophercloud.ProviderClient, error) {
+	if !cfg.Configured() {
 		return nil, errors.New("openstack credentials are not configured")
 	}
 
-	provider, err := gcopenstack.NewClient(c.cfg.AuthURL)
+	provider, err := gcopenstack.NewClient(cfg.AuthURL)
 	if err != nil {
 		return nil, err
 	}
@@ -160,23 +189,34 @@ func (c *Client) Provider(ctx context.Context) (*gophercloud.ProviderClient, err
 	}
 
 	authOptions := gophercloud.AuthOptions{
-		IdentityEndpoint: c.cfg.AuthURL,
-		Username:         c.cfg.Username,
-		Password:         c.cfg.Password,
-		DomainName:       c.cfg.UserDomainName,
-		AllowReauth:      c.cfg.AllowReauth,
-		Scope:            authScope(c.cfg),
+		IdentityEndpoint: cfg.AuthURL,
+		Username:         cfg.Username,
+		Password:         cfg.Password,
+		DomainName:       cfg.UserDomainName,
+		AllowReauth:      cfg.AllowReauth,
+		Scope:            authScope(cfg),
 	}
-	if c.cfg.ProjectID != "" {
-		authOptions.TenantID = c.cfg.ProjectID
+	if cfg.ProjectID != "" {
+		authOptions.TenantID = cfg.ProjectID
 	} else {
-		authOptions.TenantName = c.cfg.ProjectName
+		authOptions.TenantName = cfg.ProjectName
 	}
 
 	if err := gcopenstack.Authenticate(ctx, provider, authOptions); err != nil {
 		return nil, err
 	}
 	return provider, nil
+}
+
+func (c *Client) projectScopedConfig(projectID string) (config.OpenStackConfig, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return config.OpenStackConfig{}, errors.New("openstack project_id is required")
+	}
+	cfg := c.cfg
+	cfg.ProjectID = projectID
+	cfg.ProjectName = ""
+	return cfg, nil
 }
 
 func authScope(cfg config.OpenStackConfig) *gophercloud.AuthScope {

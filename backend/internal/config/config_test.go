@@ -125,4 +125,7 @@ func TestOpenStackConfiguredRequiresProjectScope(t *testing.T) {
 	if cfg.OpenStack.Configured() {
 		t.Fatal("OpenStack must require project name or project id")
 	}
+	if !cfg.OpenStack.CredentialsConfigured() {
+		t.Fatal("OpenStack credentials should remain configured without default project scope")
+	}
 }

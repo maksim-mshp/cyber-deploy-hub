@@ -42,7 +42,7 @@ func NewOpenStackProvider(client *openstack.Client, cfg config.CloudConfig) *Ope
 }
 
 func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (DeployResult, error) {
-	if p.client == nil || !p.client.Configured() {
+	if p.client == nil {
 		return DeployResult{}, errors.New("openstack credentials are not configured")
 	}
 	if strings.TrimSpace(p.cfg.PrivateSubnetID) == "" {
@@ -52,7 +52,7 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	deployCtx, cancel := context.WithTimeout(ctx, p.deployTimeout)
 	defer cancel()
 
-	services, err := p.client.Services(deployCtx)
+	services, err := p.client.ServicesForProject(deployCtx, req.ProjectID)
 	if err != nil {
 		return DeployResult{}, err
 	}
@@ -99,13 +99,13 @@ func createKeyPair(ctx context.Context, compute *gophercloud.ServiceClient, name
 }
 
 func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) error {
-	if p.client == nil || !p.client.Configured() {
+	if p.client == nil {
 		return errors.New("openstack credentials are not configured")
 	}
 	cleanupCtx, cancel := context.WithTimeout(ctx, p.deployTimeout)
 	defer cancel()
 
-	services, err := p.client.Services(cleanupCtx)
+	services, err := p.client.ServicesForProject(cleanupCtx, deployment.ProjectID)
 	if err != nil {
 		return err
 	}
