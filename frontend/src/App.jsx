@@ -874,7 +874,7 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
           <div className="instance-row" key={instance.name}>
             <div>
               <strong>{instance.name}</strong>
-              <span>{instance.fixed_ip || 'IP pending'}</span>
+              <span>{instance.access_ip ? `${instance.fixed_ip || 'IP pending'} -> ${instance.access_ip}` : instance.fixed_ip || 'IP pending'}</span>
             </div>
             <StateBadge state={instance.state} />
             <button

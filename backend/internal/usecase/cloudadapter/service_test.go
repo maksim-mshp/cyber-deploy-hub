@@ -26,6 +26,7 @@ func TestServiceDeploysAndEmitsCloudDeployed(t *testing.T) {
 			ServerID: "server-1",
 			VolumeID: "volume-1",
 			PortID:   "port-1",
+			AccessIP: "10.77.106.172",
 			State:    "ACTIVE",
 		}},
 	}}
@@ -61,6 +62,9 @@ func TestServiceDeploysAndEmitsCloudDeployed(t *testing.T) {
 	}
 	if len(payload.Instances) != 1 || payload.Instances[0].ServerID != "server-1" {
 		t.Fatalf("payload instances = %#v", payload.Instances)
+	}
+	if payload.Instances[0].AccessIP != "10.77.106.172" {
+		t.Fatalf("payload access ip = %q, want 10.77.106.172", payload.Instances[0].AccessIP)
 	}
 }
 

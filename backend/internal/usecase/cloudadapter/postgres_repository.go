@@ -83,10 +83,12 @@ SELECT name,
        image_id,
        flavor_id,
        COALESCE(fixed_ip::text, ''),
+       COALESCE(access_ip::text, ''),
        disk_gib,
        COALESCE(server_id, ''),
        COALESCE(volume_id, ''),
        COALESCE(port_id, ''),
+       COALESCE(floating_ip_id, ''),
        state
 FROM cloud_adapter.instances
 WHERE lab_run_id = $1
@@ -103,10 +105,12 @@ ORDER BY id`, labRunID)
 			&instance.ImageID,
 			&instance.FlavorID,
 			&instance.FixedIP,
+			&instance.AccessIP,
 			&instance.DiskGiB,
 			&instance.ServerID,
 			&instance.VolumeID,
 			&instance.PortID,
+			&instance.FloatingIPID,
 			&instance.State,
 		); err != nil {
 			return Deployment{}, false, err
@@ -205,22 +209,26 @@ INSERT INTO cloud_adapter.instances (
     image_id,
     flavor_id,
     fixed_ip,
+    access_ip,
     disk_gib,
     server_id,
     volume_id,
     port_id,
+    floating_ip_id,
     state
 )
-VALUES ($1, $2, $3, $4, NULLIF($5, '')::inet, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)`,
+VALUES ($1, $2, $3, $4, NULLIF($5, '')::inet, NULLIF($6, '')::inet, $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12)`,
 			labRunID,
 			instance.Name,
 			instance.ImageID,
 			instance.FlavorID,
 			instance.FixedIP,
+			instance.AccessIP,
 			instance.DiskGiB,
 			instance.ServerID,
 			instance.VolumeID,
 			instance.PortID,
+			instance.FloatingIPID,
 			instance.State,
 		); err != nil {
 			return err

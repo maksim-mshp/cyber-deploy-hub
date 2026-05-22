@@ -85,6 +85,7 @@ type DeployedInstance struct {
 	VolumeID   string `json:"volume_id,omitempty"`
 	PortID     string `json:"port_id,omitempty"`
 	InternalIP string `json:"internal_ip,omitempty"`
+	AccessIP   string `json:"access_ip,omitempty"`
 }
 
 type VDIAccessIssuedV1Payload struct {

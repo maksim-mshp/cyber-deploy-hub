@@ -221,6 +221,7 @@ func deployedInstances(instances []Instance) []events.DeployedInstance {
 			VolumeID:   instance.VolumeID,
 			PortID:     instance.PortID,
 			InternalIP: instance.FixedIP,
+			AccessIP:   instance.AccessIP,
 		})
 	}
 	return result

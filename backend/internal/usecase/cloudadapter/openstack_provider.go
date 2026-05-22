@@ -12,6 +12,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/keypairs"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/layer3/floatingips"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
@@ -74,8 +75,8 @@ func (p *OpenStackProvider) Deploy(ctx context.Context, req DeployRequest) (Depl
 	}
 	result.PrivateKey = []byte(keyPair.PrivateKey)
 
-	for _, blueprint := range req.Instances {
-		instance, err := p.deployInstance(deployCtx, services, req, blueprint, result.KeyPairName, labNetwork)
+	for index, blueprint := range req.Instances {
+		instance, err := p.deployInstance(deployCtx, services, req, blueprint, result.KeyPairName, labNetwork, index == 0)
 		result.Instances = appendOrReplaceInstance(result.Instances, instance)
 		if err != nil {
 			return result, &DeployError{Result: result, Err: err}
@@ -123,6 +124,11 @@ func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) 
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete volume %s: %w", instance.VolumeID, err))
 			}
 		}
+		if instance.FloatingIPID != "" {
+			if err := deleteFloatingIP(cleanupCtx, services.Network, instance.FloatingIPID, p.deletePollInterval); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete floating ip %s: %w", instance.FloatingIPID, err))
+			}
+		}
 		if instance.PortID != "" {
 			if err := deletePort(cleanupCtx, services.Network, instance.PortID, p.deletePollInterval); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete port %s: %w", instance.PortID, err))
@@ -134,12 +140,12 @@ func (p *OpenStackProvider) Cleanup(ctx context.Context, deployment Deployment) 
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete keypair %s: %w", deployment.KeyPairName, err))
 		}
 	}
-	if deployment.SubnetID != "" {
+	if shouldDeleteSubnet(deployment.SubnetID, p.cfg) {
 		if err := deleteSubnet(cleanupCtx, services.Network, deployment.SubnetID, p.deletePollInterval); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete subnet %s: %w", deployment.SubnetID, err))
 		}
 	}
-	if deployment.NetworkID != "" {
+	if shouldDeleteNetwork(deployment.NetworkID, p.cfg) {
 		if err := deleteNetwork(cleanupCtx, services.Network, deployment.NetworkID, p.deletePollInterval); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete network %s: %w", deployment.NetworkID, err))
 		}
@@ -159,6 +165,16 @@ func (p *OpenStackProvider) ensureLabNetwork(ctx context.Context, network *gophe
 	}
 	if template == nil || strings.TrimSpace(template.CIDR) == "" {
 		return labNetwork{}, fmt.Errorf("template subnet %s has empty CIDR", p.cfg.PrivateSubnetID)
+	}
+	if p.cfg.ReusePrivateNetwork {
+		networkID := strings.TrimSpace(p.cfg.PrivateNetworkID)
+		if networkID == "" {
+			networkID = template.NetworkID
+		}
+		if networkID == "" {
+			return labNetwork{}, fmt.Errorf("template subnet %s has empty network_id", p.cfg.PrivateSubnetID)
+		}
+		return labNetwork{NetworkID: networkID, SubnetID: template.ID}, nil
 	}
 
 	networkName := resourceName(req.LabRunID, "lab", "net")
@@ -244,7 +260,7 @@ func findSubnetByName(ctx context.Context, network *gophercloud.ServiceClient, n
 	return nil, nil
 }
 
-func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openstack.ServiceClients, req DeployRequest, blueprint commands.VMBlueprint, keyName string, labNetwork labNetwork) (Instance, error) {
+func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openstack.ServiceClients, req DeployRequest, blueprint commands.VMBlueprint, keyName string, labNetwork labNetwork, exposeForSSH bool) (Instance, error) {
 	instance := Instance{
 		Name:     blueprint.Name,
 		ImageID:  blueprint.ImageID,
@@ -286,6 +302,14 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 	}
 	instance.State = server.Status
 	instance.VolumeID = firstAttachedVolumeID(server)
+	if exposeForSSH && strings.TrimSpace(p.cfg.PublicNetworkID) != "" {
+		floatingIP, err := createFloatingIP(ctx, services.Network, p.cfg.PublicNetworkID, instance.PortID, instance.FixedIP, req.LabRunID)
+		if err != nil {
+			return instance, fmt.Errorf("create floating ip for %s: %w", blueprint.Name, err)
+		}
+		instance.FloatingIPID = floatingIP.ID
+		instance.AccessIP = floatingIP.FloatingIP
+	}
 	return instance, nil
 }
 
@@ -423,6 +447,25 @@ func deletePort(ctx context.Context, network *gophercloud.ServiceClient, portID 
 	})
 }
 
+func createFloatingIP(ctx context.Context, network *gophercloud.ServiceClient, publicNetworkID string, portID string, fixedIP string, labRunID string) (*floatingips.FloatingIP, error) {
+	return floatingips.Create(ctx, network, floatingips.CreateOpts{
+		FloatingNetworkID: strings.TrimSpace(publicNetworkID),
+		PortID:            portID,
+		FixedIP:           fixedIP,
+		Description:       "cyber-deploy-hub ssh access " + labRunID,
+	}).Extract()
+}
+
+func deleteFloatingIP(ctx context.Context, network *gophercloud.ServiceClient, floatingIPID string, interval time.Duration) error {
+	if err := floatingips.Delete(ctx, network, floatingIPID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
+		return err
+	}
+	return waitDeleted(ctx, interval, func(ctx context.Context) error {
+		_, err := floatingips.Get(ctx, network, floatingIPID).Extract()
+		return err
+	})
+}
+
 func deleteSubnet(ctx context.Context, network *gophercloud.ServiceClient, subnetID string, interval time.Duration) error {
 	if err := subnets.Delete(ctx, network, subnetID).ExtractErr(); err != nil && !gophercloud.ResponseCodeIs(err, http.StatusNotFound) {
 		return err
@@ -460,6 +503,22 @@ func waitDeleted(ctx context.Context, interval time.Duration, getErr func(contex
 		case <-ticker.C:
 		}
 	}
+}
+
+func shouldDeleteSubnet(subnetID string, cfg config.CloudConfig) bool {
+	subnetID = strings.TrimSpace(subnetID)
+	if subnetID == "" || cfg.ReusePrivateNetwork {
+		return false
+	}
+	return subnetID != strings.TrimSpace(cfg.PrivateSubnetID)
+}
+
+func shouldDeleteNetwork(networkID string, cfg config.CloudConfig) bool {
+	networkID = strings.TrimSpace(networkID)
+	if networkID == "" || cfg.ReusePrivateNetwork {
+		return false
+	}
+	return networkID != strings.TrimSpace(cfg.PrivateNetworkID)
 }
 
 func firstAttachedVolumeID(server *servers.Server) string {

@@ -22,15 +22,17 @@ type Deployment struct {
 }
 
 type Instance struct {
-	Name     string
-	ImageID  string
-	FlavorID string
-	FixedIP  string
-	DiskGiB  int64
-	ServerID string
-	VolumeID string
-	PortID   string
-	State    string
+	Name         string
+	ImageID      string
+	FlavorID     string
+	FixedIP      string
+	AccessIP     string
+	DiskGiB      int64
+	ServerID     string
+	VolumeID     string
+	PortID       string
+	FloatingIPID string
+	State        string
 }
 
 type DeployRequest struct {

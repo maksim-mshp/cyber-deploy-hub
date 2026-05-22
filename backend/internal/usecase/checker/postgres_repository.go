@@ -153,9 +153,9 @@ SELECT d.lab_run_id::text,
        COALESCE(d.private_key_key_id, '')
 FROM cloud_adapter.deployments d
 LEFT JOIN LATERAL (
-    SELECT fixed_ip::text AS fixed_ip
+    SELECT host(COALESCE(access_ip, fixed_ip)) AS fixed_ip
     FROM cloud_adapter.instances
-    WHERE lab_run_id = d.lab_run_id AND fixed_ip IS NOT NULL
+    WHERE lab_run_id = d.lab_run_id AND COALESCE(access_ip, fixed_ip) IS NOT NULL
     ORDER BY id
     LIMIT 1
 ) i ON true

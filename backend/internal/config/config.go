@@ -88,16 +88,18 @@ type CapacityConfig struct {
 }
 
 type CloudConfig struct {
-	PrivateNetworkID   string        `env:"CLOUD_PRIVATE_NETWORK_ID"`
-	PrivateSubnetID    string        `env:"CLOUD_PRIVATE_SUBNET_ID"`
-	SecurityGroupIDs   string        `env:"CLOUD_SECURITY_GROUP_IDS"`
-	BlueprintFile      string        `env:"CLOUD_BLUEPRINT_FILE"`
-	BlueprintJSON      string        `env:"CLOUD_BLUEPRINT_JSON"`
-	KeyEncryptionKey   string        `env:"CLOUD_KEY_ENCRYPTION_KEY"`
-	KeyEncryptionKeyID string        `env:"CLOUD_KEY_ENCRYPTION_KEY_ID" envDefault:"default"`
-	DeployTimeout      time.Duration `env:"CLOUD_DEPLOY_TIMEOUT" envDefault:"20m"`
-	PollInterval       time.Duration `env:"CLOUD_POLL_INTERVAL" envDefault:"5s"`
-	DeletePollInterval time.Duration `env:"CLOUD_DELETE_POLL_INTERVAL" envDefault:"3s"`
+	PrivateNetworkID    string        `env:"CLOUD_PRIVATE_NETWORK_ID"`
+	PrivateSubnetID     string        `env:"CLOUD_PRIVATE_SUBNET_ID"`
+	ReusePrivateNetwork bool          `env:"CLOUD_REUSE_PRIVATE_NETWORK" envDefault:"false"`
+	PublicNetworkID     string        `env:"CLOUD_PUBLIC_NETWORK_ID"`
+	SecurityGroupIDs    string        `env:"CLOUD_SECURITY_GROUP_IDS"`
+	BlueprintFile       string        `env:"CLOUD_BLUEPRINT_FILE"`
+	BlueprintJSON       string        `env:"CLOUD_BLUEPRINT_JSON"`
+	KeyEncryptionKey    string        `env:"CLOUD_KEY_ENCRYPTION_KEY"`
+	KeyEncryptionKeyID  string        `env:"CLOUD_KEY_ENCRYPTION_KEY_ID" envDefault:"default"`
+	DeployTimeout       time.Duration `env:"CLOUD_DEPLOY_TIMEOUT" envDefault:"20m"`
+	PollInterval        time.Duration `env:"CLOUD_POLL_INTERVAL" envDefault:"5s"`
+	DeletePollInterval  time.Duration `env:"CLOUD_DELETE_POLL_INTERVAL" envDefault:"3s"`
 }
 
 type VDIConfig struct {
