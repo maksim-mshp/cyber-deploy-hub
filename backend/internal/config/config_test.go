@@ -68,6 +68,9 @@ func TestLoadUsesSafeDefaults(t *testing.T) {
 	if cfg.Lifecycle.DefaultFreezeTTL != 24*time.Hour {
 		t.Fatalf("Lifecycle.DefaultFreezeTTL = %v, want 24h", cfg.Lifecycle.DefaultFreezeTTL)
 	}
+	if cfg.Auth.LocalStudentLoginEnabled {
+		t.Fatal("local student login must be disabled by default")
+	}
 }
 
 func TestKIConfiguredSupportsProjectCredentials(t *testing.T) {

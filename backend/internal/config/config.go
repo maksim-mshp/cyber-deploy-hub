@@ -140,14 +140,15 @@ type LMSConfig struct {
 }
 
 type AuthConfig struct {
-	SessionSecret  string        `env:"AUTH_SESSION_SECRET"`
-	SessionTTL     time.Duration `env:"AUTH_SESSION_TTL" envDefault:"8h"`
-	CookieName     string        `env:"AUTH_COOKIE_NAME" envDefault:"cdh_session"`
-	CookieSecure   bool          `env:"AUTH_COOKIE_SECURE" envDefault:"false"`
-	CookieSameSite string        `env:"AUTH_COOKIE_SAME_SITE" envDefault:"lax"`
-	CookieDomain   string        `env:"AUTH_COOKIE_DOMAIN"`
-	FrontendURL    string        `env:"AUTH_FRONTEND_URL" envDefault:"/"`
-	LocalUsersJSON string        `env:"AUTH_LOCAL_USERS_JSON"`
+	SessionSecret            string        `env:"AUTH_SESSION_SECRET"`
+	SessionTTL               time.Duration `env:"AUTH_SESSION_TTL" envDefault:"8h"`
+	CookieName               string        `env:"AUTH_COOKIE_NAME" envDefault:"cdh_session"`
+	CookieSecure             bool          `env:"AUTH_COOKIE_SECURE" envDefault:"false"`
+	CookieSameSite           string        `env:"AUTH_COOKIE_SAME_SITE" envDefault:"lax"`
+	CookieDomain             string        `env:"AUTH_COOKIE_DOMAIN"`
+	FrontendURL              string        `env:"AUTH_FRONTEND_URL" envDefault:"/"`
+	LocalUsersJSON           string        `env:"AUTH_LOCAL_USERS_JSON"`
+	LocalStudentLoginEnabled bool          `env:"AUTH_LOCAL_STUDENT_LOGIN_ENABLED" envDefault:"false"`
 }
 
 func (c KIConfig) Configured() bool {

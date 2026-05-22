@@ -9,9 +9,10 @@ import (
 
 func TestServiceLoginAndAuthenticateToken(t *testing.T) {
 	service, err := NewService(Config{
-		SessionSecret:  "0123456789abcdef",
-		SessionTTL:     time.Hour,
-		LocalUsersJSON: `[{"username":"student-1","password":"pass","role":"student","display_name":"Student One"}]`,
+		SessionSecret:            "0123456789abcdef",
+		SessionTTL:               time.Hour,
+		LocalUsersJSON:           `[{"username":"student-1","password":"pass","role":"student","display_name":"Student One"}]`,
+		LocalStudentLoginEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -72,6 +73,21 @@ func TestServiceLoginWithBcryptPasswordHash(t *testing.T) {
 	}
 	if result.User.Role != RoleTeacher || result.User.Subject != "teacher" {
 		t.Fatalf("user = %#v", result.User)
+	}
+}
+
+func TestServiceRejectsLocalStudentLoginByDefault(t *testing.T) {
+	service, err := NewService(Config{
+		SessionSecret:  "0123456789abcdef",
+		SessionTTL:     time.Hour,
+		LocalUsersJSON: `[{"username":"student-1","password":"pass","role":"student"}]`,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if _, err := service.Login(context.Background(), LoginRequest{Username: "student-1", Password: "pass"}); err == nil {
+		t.Fatal("expected local student login to be disabled")
 	}
 }
 

@@ -22,13 +22,14 @@ const (
 )
 
 type Config struct {
-	SessionSecret  string
-	SessionTTL     time.Duration
-	CookieName     string
-	CookieSecure   bool
-	CookieSameSite string
-	CookieDomain   string
-	LocalUsersJSON string
+	SessionSecret            string
+	SessionTTL               time.Duration
+	CookieName               string
+	CookieSecure             bool
+	CookieSameSite           string
+	CookieDomain             string
+	LocalUsersJSON           string
+	LocalStudentLoginEnabled bool
 }
 
 type LocalUser struct {
@@ -59,14 +60,15 @@ type LoginResult struct {
 }
 
 type Service struct {
-	users          map[string]LocalUser
-	sessionSecret  []byte
-	sessionTTL     time.Duration
-	cookieName     string
-	cookieSecure   bool
-	cookieSameSite http.SameSite
-	cookieDomain   string
-	now            func() time.Time
+	users                    map[string]LocalUser
+	sessionSecret            []byte
+	sessionTTL               time.Duration
+	cookieName               string
+	cookieSecure             bool
+	cookieSameSite           http.SameSite
+	cookieDomain             string
+	localStudentLoginEnabled bool
+	now                      func() time.Time
 }
 
 func NewService(cfg Config) (*Service, error) {
@@ -94,14 +96,15 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		users:          users,
-		sessionSecret:  []byte(secret),
-		sessionTTL:     ttl,
-		cookieName:     cookieName,
-		cookieSecure:   cfg.CookieSecure,
-		cookieSameSite: sameSite,
-		cookieDomain:   strings.TrimSpace(cfg.CookieDomain),
-		now:            time.Now,
+		users:                    users,
+		sessionSecret:            []byte(secret),
+		sessionTTL:               ttl,
+		cookieName:               cookieName,
+		cookieSecure:             cfg.CookieSecure,
+		cookieSameSite:           sameSite,
+		cookieDomain:             strings.TrimSpace(cfg.CookieDomain),
+		localStudentLoginEnabled: cfg.LocalStudentLoginEnabled,
+		now:                      time.Now,
 	}, nil
 }
 
@@ -139,6 +142,9 @@ func (s *Service) Login(_ context.Context, req LoginRequest) (LoginResult, error
 	user, ok := s.users[username]
 	if !ok || !user.passwordMatches(password) {
 		return LoginResult{}, errors.New("invalid username or password")
+	}
+	if user.Role == RoleStudent && !s.localStudentLoginEnabled {
+		return LoginResult{}, errors.New("local student login is disabled; launch labs through LTI")
 	}
 	principal := Principal{
 		Subject:     user.Username,

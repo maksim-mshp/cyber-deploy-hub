@@ -341,9 +341,10 @@ func TestTeacherCanStartDisabledLabDefinition(t *testing.T) {
 func testAuthService(t *testing.T) *authn.Service {
 	t.Helper()
 	service, err := authn.NewService(authn.Config{
-		SessionSecret:  "0123456789abcdef",
-		SessionTTL:     time.Hour,
-		LocalUsersJSON: `[{"username":"student","password":"student-pass","role":"student"}]`,
+		SessionSecret:            "0123456789abcdef",
+		SessionTTL:               time.Hour,
+		LocalUsersJSON:           `[{"username":"student","password":"student-pass","role":"student"}]`,
+		LocalStudentLoginEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

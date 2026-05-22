@@ -72,13 +72,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	labService := labs.NewService(serviceName, bus, outboxStore)
 	settingsService := settings.NewService(serviceName, bus, outboxStore)
 	authService, err := authn.NewService(authn.Config{
-		SessionSecret:  cfg.Auth.SessionSecret,
-		SessionTTL:     cfg.Auth.SessionTTL,
-		CookieName:     cfg.Auth.CookieName,
-		CookieSecure:   cfg.Auth.CookieSecure,
-		CookieSameSite: cfg.Auth.CookieSameSite,
-		CookieDomain:   cfg.Auth.CookieDomain,
-		LocalUsersJSON: cfg.Auth.LocalUsersJSON,
+		SessionSecret:            cfg.Auth.SessionSecret,
+		SessionTTL:               cfg.Auth.SessionTTL,
+		CookieName:               cfg.Auth.CookieName,
+		CookieSecure:             cfg.Auth.CookieSecure,
+		CookieSameSite:           cfg.Auth.CookieSameSite,
+		CookieDomain:             cfg.Auth.CookieDomain,
+		LocalUsersJSON:           cfg.Auth.LocalUsersJSON,
+		LocalStudentLoginEnabled: cfg.Auth.LocalStudentLoginEnabled,
 	})
 	if err != nil {
 		return err
