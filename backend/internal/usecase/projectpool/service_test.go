@@ -32,6 +32,32 @@ func TestServiceDelegatesProjectAllocateCommand(t *testing.T) {
 	}
 }
 
+func TestServiceImportsSeedCommand(t *testing.T) {
+	repo := &fakeRepository{}
+	service := NewService(repo)
+	payload := commands.ProjectImportSeedV1Payload{
+		Domains: []commands.ProjectPoolDomainV1{{
+			DomainID: "domain-1",
+			CourseID: "course-1",
+			Name:     "Course domain",
+		}},
+		Projects: []commands.ProjectPoolProjectV1{{
+			ProjectID: "11111111-1111-4111-8111-111111111111",
+			DomainID:  "domain-1",
+			Name:      "course-1-project-1",
+		}},
+	}
+	envelope := testEnvelope(t, commands.ProjectImportSeedV1, payload)
+
+	if err := service.Handle(context.Background(), envelope); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if repo.seed.Domains[0].CourseID != "course-1" || repo.seed.Projects[0].Name != "course-1-project-1" {
+		t.Fatalf("seed = %#v", repo.seed)
+	}
+}
+
 func TestServiceDelegatesProjectReleaseCommand(t *testing.T) {
 	repo := &fakeRepository{}
 	service := NewService(repo)

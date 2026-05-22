@@ -17,6 +17,7 @@ import (
 	"cyber-deploy-hub/internal/usecase/authn"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
+	"cyber-deploy-hub/internal/usecase/projectpool"
 	"cyber-deploy-hub/internal/usecase/readmodel"
 	"cyber-deploy-hub/internal/usecase/settings"
 )
@@ -30,6 +31,10 @@ type LabUsecase interface {
 
 type SettingsUsecase interface {
 	Update(ctx context.Context, req settings.UpdateRequest) (settings.UpdateAccepted, error)
+}
+
+type ProjectPoolUsecase interface {
+	RequestImport(ctx context.Context, req projectpool.ImportRequest) (projectpool.ImportAccepted, error)
 }
 
 type LabCatalogUsecase interface {
@@ -64,18 +69,19 @@ type ReadModel interface {
 }
 
 type Server struct {
-	labs      LabUsecase
-	settings  SettingsUsecase
-	catalog   LabCatalogUsecase
-	read      ReadModel
-	auth      *authn.Service
-	ready     ReadinessChecker
-	openstack OpenStackChecker
-	logger    *slog.Logger
+	labs        LabUsecase
+	settings    SettingsUsecase
+	projectPool ProjectPoolUsecase
+	catalog     LabCatalogUsecase
+	read        ReadModel
+	auth        *authn.Service
+	ready       ReadinessChecker
+	openstack   OpenStackChecker
+	logger      *slog.Logger
 }
 
-func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog LabCatalogUsecase, read ReadModel, authService *authn.Service, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger) *Server {
-	return &Server{
+func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog LabCatalogUsecase, read ReadModel, authService *authn.Service, ready ReadinessChecker, openstack OpenStackChecker, logger *slog.Logger, projectPoolUsecases ...ProjectPoolUsecase) *Server {
+	server := &Server{
 		labs:      labUsecase,
 		settings:  settingsUsecase,
 		catalog:   catalog,
@@ -85,6 +91,10 @@ func NewServer(labUsecase LabUsecase, settingsUsecase SettingsUsecase, catalog L
 		openstack: openstack,
 		logger:    logger,
 	}
+	if len(projectPoolUsecases) > 0 {
+		server.projectPool = projectPoolUsecases[0]
+	}
+	return server
 }
 
 func (s *Server) Routes() http.Handler {
@@ -112,6 +122,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/settings", s.handleGetSettings)
 	mux.HandleFunc("POST /api/admin/settings", s.handleUpdateSettings)
 	mux.HandleFunc("GET /api/admin/project-pool", s.handleProjectPool)
+	mux.HandleFunc("POST /api/admin/project-pool/import", s.handleImportProjectPool)
 	mux.HandleFunc("GET /api/teacher/lab-definitions", s.handleListTeacherLabDefinitions)
 	mux.HandleFunc("POST /api/teacher/lab-definitions", s.handleUpdateTeacherLabDefinition)
 	return s.withRequestLog(s.withAuth(mux))
@@ -570,6 +581,30 @@ func (s *Server) handleProjectPool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
+func (s *Server) handleImportProjectPool(w http.ResponseWriter, r *http.Request) {
+	if s.projectPool == nil {
+		writeError(w, http.StatusServiceUnavailable, "project_pool_unavailable", "Project pool import is not configured")
+		return
+	}
+	var req importProjectPoolRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, err := s.projectPool.RequestImport(r.Context(), projectpool.ImportRequest{
+		Seed: projectpool.Seed{
+			Domains:  req.Domains,
+			Projects: req.Projects,
+		},
+		IdempotencyKey: req.IdempotencyKey,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "project_pool_import_rejected", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
 func (s *Server) handleListTeacherLabDefinitions(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "lab_catalog_unavailable", "Lab catalog is not configured")
@@ -645,6 +680,12 @@ type updateSettingsRequest struct {
 	ChangedBy      string         `json:"changed_by"`
 	Values         map[string]any `json:"values"`
 	IdempotencyKey string         `json:"idempotency_key"`
+}
+
+type importProjectPoolRequest struct {
+	Domains        []projectpool.SeedDomain  `json:"domains"`
+	Projects       []projectpool.SeedProject `json:"projects"`
+	IdempotencyKey string                    `json:"idempotency_key"`
 }
 
 var errEmptyBody = errors.New("empty body")

@@ -14,6 +14,7 @@ import (
 	"cyber-deploy-hub/internal/usecase/authn"
 	"cyber-deploy-hub/internal/usecase/labcatalog"
 	"cyber-deploy-hub/internal/usecase/labs"
+	"cyber-deploy-hub/internal/usecase/projectpool"
 	"cyber-deploy-hub/internal/usecase/readmodel"
 )
 
@@ -168,6 +169,27 @@ func TestHandleListOpenStackCatalog(t *testing.T) {
 	}
 	if len(flavorPayload.Flavors) != 1 || flavorPayload.Flavors[0].Name != "small" {
 		t.Fatalf("flavors = %#v", flavorPayload.Flavors)
+	}
+}
+
+func TestHandleImportProjectPoolQueuesSeed(t *testing.T) {
+	pool := &fakeProjectPoolUsecase{}
+	server := NewServer(&fakeLabUsecase{}, nil, &fakeLabCatalog{}, nil, nil, nil, nil, nil, pool)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/project-pool/import", strings.NewReader(`{
+		"domains":[{"domain_id":"domain-1","course_id":"course-1","name":"Course domain"}],
+		"projects":[{"project_id":"11111111-1111-4111-8111-111111111111","domain_id":"domain-1","name":"course-1-project-1"}],
+		"idempotency_key":"seed:course-1"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if pool.request.IdempotencyKey != "seed:course-1" || pool.request.Seed.Projects[0].Name != "course-1-project-1" {
+		t.Fatalf("request = %#v", pool.request)
 	}
 }
 
@@ -400,6 +422,15 @@ func (c *fakeLabCatalog) Get(_ context.Context, courseID string, labID string) (
 func (c *fakeLabCatalog) Update(_ context.Context, req labcatalog.UpdateRequest) (labcatalog.UpdateResult, error) {
 	c.update = req
 	return labcatalog.UpdateResult{Lab: req.Definition}, nil
+}
+
+type fakeProjectPoolUsecase struct {
+	request projectpool.ImportRequest
+}
+
+func (u *fakeProjectPoolUsecase) RequestImport(_ context.Context, req projectpool.ImportRequest) (projectpool.ImportAccepted, error) {
+	u.request = req
+	return projectpool.ImportAccepted{CommandID: "cmd-1", Status: "ACCEPTED"}, nil
 }
 
 type fakeReadModel struct {

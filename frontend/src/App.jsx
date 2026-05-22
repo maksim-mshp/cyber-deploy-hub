@@ -56,6 +56,15 @@ const emptyProjectPool = {
   projects: [],
 }
 
+const projectSeedTemplate = JSON.stringify(
+  {
+    domains: [{ domain_id: '', course_id: 'course-3', name: '' }],
+    projects: [{ project_id: '', domain_id: '', name: '' }],
+  },
+  null,
+  2,
+)
+
 let launchNoticeCache
 
 function App() {
@@ -559,6 +568,27 @@ function TeacherDashboard({ user }) {
     }
   }
 
+  async function importProjectPool(seed) {
+    setBusy(true)
+    setNotice('')
+    try {
+      await requestJSON('/api/admin/project-pool/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...seed,
+          idempotency_key: `project-pool:${user.subject}:${Date.now()}`,
+        }),
+      })
+      await refresh()
+      setNotice('Импорт пула принят')
+    } catch (error) {
+      setNotice(error.message)
+      throw error
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="teacher-layout">
       <section className="hero-band">
@@ -589,7 +619,7 @@ function TeacherDashboard({ user }) {
         busy={busy}
       />
 
-      <ProjectPoolPanel pool={projectPool} />
+      <ProjectPoolPanel pool={projectPool} onImport={importProjectPool} busy={busy} />
 
       <div className="teacher-grid">
         <section className="panel">
@@ -685,11 +715,23 @@ function TeacherDashboard({ user }) {
   )
 }
 
-function ProjectPoolPanel({ pool }) {
+function ProjectPoolPanel({ pool, onImport, busy }) {
   const projects = pool.projects ?? []
   const states = pool.states ?? {}
   const warning = projectPoolWarning(projects, states)
   const visibleProjects = projects.slice(0, 8)
+  const [seedJSON, setSeedJSON] = useState(projectSeedTemplate)
+  const [error, setError] = useState('')
+
+  async function importSeed() {
+    try {
+      const seed = parseProjectPoolSeed(seedJSON)
+      setError('')
+      await onImport(seed)
+    } catch (nextError) {
+      setError(nextError.message)
+    }
+  }
 
   return (
     <section className="panel project-pool-panel">
@@ -711,6 +753,17 @@ function ProjectPoolPanel({ pool }) {
         </div>
       </div>
       {warning ? <p className="form-error">{warning}</p> : null}
+      <div className="pool-import">
+        <label>
+          <span>Seed JSON</span>
+          <textarea value={seedJSON} onChange={(event) => setSeedJSON(event.target.value)} spellCheck="false" />
+        </label>
+        <button className="secondary-button" type="button" onClick={importSeed} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
+          Импортировать
+        </button>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
       <div className="pool-list">
         {visibleProjects.map((project) => (
           <div className="pool-row" key={project.id}>
@@ -1199,6 +1252,25 @@ function projectPoolWarning(projects, states) {
     return 'В пуле только один project: параллельные студенческие запуски быстро исчерпают емкость'
   }
   return ''
+}
+
+function parseProjectPoolSeed(raw) {
+  let seed
+  try {
+    seed = JSON.parse(raw)
+  } catch {
+    throw new Error('Seed должен быть валидным JSON')
+  }
+  if (!Array.isArray(seed.domains) || seed.domains.length === 0) {
+    throw new Error('Seed должен содержать domains')
+  }
+  if (!Array.isArray(seed.projects) || seed.projects.length === 0) {
+    throw new Error('Seed должен содержать projects')
+  }
+  return {
+    domains: seed.domains,
+    projects: seed.projects,
+  }
 }
 
 function projectStateCount(states, state) {

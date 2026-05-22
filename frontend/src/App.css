@@ -391,6 +391,19 @@ textarea {
   gap: 14px;
 }
 
+.pool-import {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.pool-import textarea {
+  min-height: 132px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
 .pool-stats {
   display: flex;
   justify-content: flex-end;
@@ -533,6 +546,7 @@ textarea {
 
   .teacher-grid,
   .form-grid,
+  .pool-import,
   .vm-row {
     grid-template-columns: 1fr;
   }

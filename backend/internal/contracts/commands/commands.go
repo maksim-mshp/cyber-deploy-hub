@@ -9,8 +9,9 @@ const (
 	RequestCleanupV1      contracts.Subject = "cmd.lab.request_cleanup.v1"
 	RequestVDIAccessV1    contracts.Subject = "cmd.lab.request_vdi_access.v1"
 
-	ProjectAllocateV1 contracts.Subject = "cmd.project.allocate.v1"
-	ProjectReleaseV1  contracts.Subject = "cmd.project.release.v1"
+	ProjectAllocateV1   contracts.Subject = "cmd.project.allocate.v1"
+	ProjectReleaseV1    contracts.Subject = "cmd.project.release.v1"
+	ProjectImportSeedV1 contracts.Subject = "cmd.project.import_seed.v1"
 
 	CapacityCheckV1              contracts.Subject = "cmd.capacity.check.v1"
 	CapacityReleaseReservationV1 contracts.Subject = "cmd.capacity.release_reservation.v1"
@@ -58,6 +59,23 @@ type ProjectReleaseV1Payload struct {
 	LabRunID  string `json:"lab_run_id"`
 	ProjectID string `json:"project_id"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+type ProjectImportSeedV1Payload struct {
+	Domains  []ProjectPoolDomainV1  `json:"domains"`
+	Projects []ProjectPoolProjectV1 `json:"projects"`
+}
+
+type ProjectPoolDomainV1 struct {
+	DomainID string `json:"domain_id"`
+	CourseID string `json:"course_id"`
+	Name     string `json:"name"`
+}
+
+type ProjectPoolProjectV1 struct {
+	ProjectID string `json:"project_id"`
+	DomainID  string `json:"domain_id"`
+	Name      string `json:"name"`
 }
 
 type CapacityCheckV1Payload struct {
