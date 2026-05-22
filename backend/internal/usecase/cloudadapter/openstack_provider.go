@@ -22,6 +22,13 @@ import (
 	"cyber-deploy-hub/internal/contracts/commands"
 )
 
+const (
+	managedByMetadataKey   = "managed_by"
+	managedByMetadataValue = "cyber-deploy-hub"
+	labRunIDMetadataKey    = "lab_run_id"
+	vmRoleMetadataKey      = "vm_role"
+)
+
 type OpenStackProvider struct {
 	client             *openstack.Client
 	cfg                config.CloudConfig
@@ -271,12 +278,13 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 	}
 
 	if blueprint.FixedIP != "" {
-		occupied, err := fixedIPOccupied(ctx, services.Network, labNetwork.NetworkID, blueprint.FixedIP)
+		conflict, err := findFixedIPConflict(ctx, services, labNetwork.NetworkID, blueprint.FixedIP)
 		if err != nil {
 			return instance, fmt.Errorf("check fixed ip %s: %w", blueprint.FixedIP, err)
 		}
-		if occupied {
-			return instance, fmt.Errorf("fixed ip %s is already in use", blueprint.FixedIP)
+		if conflict != nil {
+			instance.State = "ERROR"
+			return instance, errors.New(fixedIPConflictMessage(blueprint.FixedIP, conflict))
 		}
 	}
 
@@ -313,19 +321,106 @@ func (p *OpenStackProvider) deployInstance(ctx context.Context, services *openst
 	return instance, nil
 }
 
-func fixedIPOccupied(ctx context.Context, network *gophercloud.ServiceClient, networkID string, fixedIP string) (bool, error) {
-	page, err := ports.List(network, ports.ListOpts{
+type fixedIPConflictInfo struct {
+	PortID          string
+	PortName        string
+	PortStatus      string
+	DeviceOwner     string
+	DeviceID        string
+	ProjectID       string
+	ServerID        string
+	ServerName      string
+	ServerStatus    string
+	ServerManagedBy string
+	ServerLabRunID  string
+}
+
+func findFixedIPConflict(ctx context.Context, services *openstack.ServiceClients, networkID string, fixedIP string) (*fixedIPConflictInfo, error) {
+	page, err := ports.List(services.Network, ports.ListOpts{
 		NetworkID: networkID,
 		FixedIPs:  []ports.FixedIPOpts{{IPAddress: fixedIP}},
 	}).AllPages(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	existing, err := ports.ExtractPorts(page)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return len(existing) > 0, nil
+	if len(existing) == 0 {
+		return nil, nil
+	}
+
+	conflict := fixedIPConflictFromPort(existing[0])
+	if services != nil && services.Compute != nil && conflict.DeviceID != "" && strings.HasPrefix(conflict.DeviceOwner, "compute:") {
+		server, err := servers.Get(ctx, services.Compute, conflict.DeviceID).Extract()
+		if err == nil && server != nil {
+			conflict.ServerID = server.ID
+			conflict.ServerName = server.Name
+			conflict.ServerStatus = server.Status
+			conflict.ServerManagedBy = server.Metadata[managedByMetadataKey]
+			conflict.ServerLabRunID = server.Metadata[labRunIDMetadataKey]
+		}
+	}
+	return &conflict, nil
+}
+
+func fixedIPConflictFromPort(port ports.Port) fixedIPConflictInfo {
+	return fixedIPConflictInfo{
+		PortID:      port.ID,
+		PortName:    port.Name,
+		PortStatus:  port.Status,
+		DeviceOwner: port.DeviceOwner,
+		DeviceID:    port.DeviceID,
+		ProjectID:   firstNonEmpty(port.ProjectID, port.TenantID),
+	}
+}
+
+func fixedIPConflictMessage(fixedIP string, conflict *fixedIPConflictInfo) string {
+	if conflict == nil {
+		return fmt.Sprintf("fixed IP %s is already in use", fixedIP)
+	}
+
+	details := []string{}
+	if conflict.PortID != "" {
+		details = append(details, "port_id="+conflict.PortID)
+	}
+	if conflict.PortName != "" {
+		details = append(details, "port_name="+conflict.PortName)
+	}
+	if conflict.PortStatus != "" {
+		details = append(details, "port_status="+conflict.PortStatus)
+	}
+	if conflict.DeviceOwner != "" {
+		details = append(details, "device_owner="+conflict.DeviceOwner)
+	}
+	if conflict.DeviceID != "" {
+		details = append(details, "device_id="+conflict.DeviceID)
+	}
+	if conflict.ProjectID != "" {
+		details = append(details, "project_id="+conflict.ProjectID)
+	}
+	if conflict.ServerName != "" {
+		details = append(details, "server_name="+conflict.ServerName)
+	}
+	if conflict.ServerStatus != "" {
+		details = append(details, "server_status="+conflict.ServerStatus)
+	}
+	if conflict.ServerManagedBy != "" {
+		details = append(details, "managed_by="+conflict.ServerManagedBy)
+	}
+	if conflict.ServerLabRunID != "" {
+		details = append(details, "resource_lab_run_id="+conflict.ServerLabRunID)
+	}
+
+	message := fmt.Sprintf("fixed IP %s is already in use by an OpenStack resource", fixedIP)
+	if len(details) > 0 {
+		message += " (" + strings.Join(details, ", ") + ")"
+	}
+	if conflict.ServerManagedBy == managedByMetadataValue {
+		return message + "; cleanup the stale Cyber Deploy Hub resource in OpenStack or choose another fixed_ip"
+	}
+	return message + "; cleanup the resource or choose another fixed_ip"
 }
 
 func (p *OpenStackProvider) createPort(ctx context.Context, network *gophercloud.ServiceClient, req DeployRequest, blueprint commands.VMBlueprint, labNetwork labNetwork) (*ports.Port, error) {
@@ -351,9 +446,9 @@ func (p *OpenStackProvider) createServer(ctx context.Context, compute *gopherclo
 		FlavorRef: blueprint.FlavorID,
 		Networks:  []servers.Network{{Port: portID}},
 		Metadata: map[string]string{
-			"lab_run_id": req.LabRunID,
-			"managed_by": "cyber-deploy-hub",
-			"vm_role":    blueprint.Name,
+			labRunIDMetadataKey:  req.LabRunID,
+			managedByMetadataKey: managedByMetadataValue,
+			vmRoleMetadataKey:    blueprint.Name,
 		},
 		BlockDevice: []servers.BlockDevice{{
 			SourceType:          servers.SourceImage,
@@ -579,4 +674,13 @@ func nonZeroDuration(value time.Duration, fallback time.Duration) time.Duration 
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -33,6 +33,16 @@ const activeStates = new Set([
 
 const terminalStates = new Set(['FINISHED', 'FAILED'])
 
+const pendingStateText = {
+  REQUESTED: 'заявка принята',
+  ALLOCATING_PROJECT: 'выделяем изолированный проект',
+  CHECKING_CAPACITY: 'проверяем емкость облака',
+  DEPLOYING: 'создаем виртуальные машины',
+  ISSUING_VDI_ACCESS: 'готовим доступ к стенду',
+  VERIFYING: 'выполняем проверку',
+  CLEANING: 'очищаем ресурсы стенда',
+}
+
 const emptyDefinition = {
   course_id: 'course-3',
   lab_id: '',
@@ -854,6 +864,7 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
   const readyInstances = instances.filter((item) => item.state === 'ACTIVE').length
   const canFinish = run.state !== 'FINISHED' && run.state !== 'CLEANING'
   const canUseActiveAction = !terminalStates.has(run.state) && run.state !== 'CLEANING'
+  const statusNotice = runStatusNotice(run)
 
   return (
     <section className={compact ? 'panel run-panel compact-run' : 'panel run-panel'}>
@@ -864,7 +875,7 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
         </div>
         <StateBadge state={run.state} />
       </div>
-      {run.failure_message ? <Notice tone="danger">{run.failure_message}</Notice> : null}
+      {statusNotice ? <Notice tone={statusNotice.tone}>{statusNotice.message}</Notice> : null}
       <div className="metrics-row inner">
         <Metric icon={Server} label="VM active" value={`${readyInstances}/${instances.length || 0}`} />
         <Metric icon={Activity} label="Таймер" value={run.cleanup_due_at ? timeLeft(run.cleanup_due_at) : 'нет'} />
@@ -888,7 +899,7 @@ function RunPanel({ run, instances, title, onFinish, onFreeze, onCheck, finishin
             </button>
           </div>
         ))}
-        {instances.length === 0 ? <p className="empty">VM появятся после разворачивания</p> : null}
+        {instances.length === 0 ? <p className="empty">{emptyInstancesText(run)}</p> : null}
       </div>
       <div className="action-row">
         {onCheck ? (
@@ -1083,6 +1094,59 @@ function StateBadge({ state }) {
 
 function Notice({ children, tone = 'info' }) {
   return <div className={`notice ${tone}`}>{children}</div>
+}
+
+function runStatusNotice(run) {
+  if (!run) {
+    return null
+  }
+  if (run.state === 'FAILED') {
+    return {
+      tone: 'danger',
+      message: `Запуск не выполнен. ${humanizeFailure(run.failure_message || run.failure_code || 'Причина не указана')}`,
+    }
+  }
+  if (run.failure_message) {
+    return {
+      tone: 'danger',
+      message: humanizeFailure(run.failure_message),
+    }
+  }
+  if (pendingStateText[run.state]) {
+    return {
+      tone: 'info',
+      message: `Стенд запускается: ${pendingStateText[run.state]}. Статус обновляется автоматически.`,
+    }
+  }
+  return null
+}
+
+function humanizeFailure(message) {
+  const raw = String(message || '').trim()
+  const fixedIPMatch = raw.match(/fixed IP ([^ ]+) is already in use/i) || raw.match(/fixed ip ([^ ]+) is already in use/i)
+  if (fixedIPMatch) {
+    return `IP ${fixedIPMatch[1]} уже занят в OpenStack. Освободите старый ресурс Cyber Deploy Hub или измените fixed_ip в конфигурации лабораторной. Технические детали: ${raw}`
+  }
+  if (raw.includes('lab definition is not available')) {
+    return 'Конфигурация лабораторной не найдена или отключена для студентов. Проверьте код lab_id в Moodle и переключатель "Доступна студентам".'
+  }
+  if (raw.includes('no free project') || raw.includes('free project')) {
+    return 'В пуле нет свободного проекта для курса. Освободите существующий стенд или добавьте проект в пул.'
+  }
+  return raw
+}
+
+function emptyInstancesText(run) {
+  if (!run) {
+    return 'VM появятся после разворачивания'
+  }
+  if (run.state === 'FAILED') {
+    return 'VM не созданы из-за ошибки выше'
+  }
+  if (pendingStateText[run.state]) {
+    return `VM появятся после этапа: ${pendingStateText[run.state]}`
+  }
+  return 'VM появятся после разворачивания'
 }
 
 async function requestJSON(path, options = {}) {
