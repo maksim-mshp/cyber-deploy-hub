@@ -59,11 +59,20 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	poolHasProjects := false
 	if seed.Empty() && cfg.ProjectPool.AutoImportOpenStackProject {
+		poolHasProjects, err = repo.HasProjects(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if shouldAutoImportOpenStackProject(seed, cfg.ProjectPool, poolHasProjects) {
 		seed, err = openStackProjectSeed(ctx, cfg)
 		if err != nil {
 			return err
 		}
+	} else if poolHasProjects {
+		logger.Info("project pool auto import skipped; database already has projects")
 	}
 	if err := service.ImportSeed(ctx, seed); err != nil {
 		return err
@@ -109,6 +118,10 @@ func openStackProjectSeed(ctx context.Context, cfg config.Config) (projectpoolus
 		return projectpoolusecase.Seed{}, err
 	}
 	return seedFromOpenStackProject(info, cfg.ProjectPool, cfg.OpenStack.ProjectName), nil
+}
+
+func shouldAutoImportOpenStackProject(seed projectpoolusecase.Seed, cfg config.ProjectPoolConfig, poolHasProjects bool) bool {
+	return seed.Empty() && cfg.AutoImportOpenStackProject && !poolHasProjects
 }
 
 func seedFromOpenStackProject(info *openstack.ProjectInfo, cfg config.ProjectPoolConfig, fallbackProjectName string) projectpoolusecase.Seed {

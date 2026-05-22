@@ -5,6 +5,7 @@ import (
 
 	"cyber-deploy-hub/internal/cloud/openstack"
 	"cyber-deploy-hub/internal/config"
+	projectpoolusecase "cyber-deploy-hub/internal/usecase/projectpool"
 )
 
 func TestSeedFromOpenStackProjectUsesScopedProject(t *testing.T) {
@@ -31,5 +32,25 @@ func TestSeedFromOpenStackProjectUsesScopedProject(t *testing.T) {
 	}
 	if seed.Projects[0].DomainID != "Hackhaton" {
 		t.Fatalf("domain id = %q", seed.Projects[0].DomainID)
+	}
+}
+
+func TestShouldAutoImportOpenStackProject(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.ProjectPoolConfig{AutoImportOpenStackProject: true}
+	if !shouldAutoImportOpenStackProject(projectpoolusecase.Seed{}, cfg, false) {
+		t.Fatal("expected empty database to auto import configured OpenStack project")
+	}
+	if shouldAutoImportOpenStackProject(projectpoolusecase.Seed{}, cfg, true) {
+		t.Fatal("expected existing database projects to skip OpenStack auto import")
+	}
+	if shouldAutoImportOpenStackProject(projectpoolusecase.Seed{
+		Domains: []projectpoolusecase.SeedDomain{{DomainID: "domain", CourseID: "course", Name: "Domain"}},
+	}, cfg, false) {
+		t.Fatal("expected explicit seed to skip OpenStack auto import")
+	}
+	if shouldAutoImportOpenStackProject(projectpoolusecase.Seed{}, config.ProjectPoolConfig{}, false) {
+		t.Fatal("expected disabled auto import to stay disabled")
 	}
 }

@@ -81,6 +81,18 @@ SET domain_id = EXCLUDED.domain_id,
 	})
 }
 
+func (r *PostgresRepository) HasProjects(ctx context.Context) (bool, error) {
+	var hasProjects bool
+	if err := r.db.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM project_pool.ki_projects
+)`).Scan(&hasProjects); err != nil {
+		return false, err
+	}
+	return hasProjects, nil
+}
+
 func (r *PostgresRepository) Allocate(ctx context.Context, command contracts.Envelope, req commands.ProjectAllocateV1Payload) error {
 	if err := validateAllocateRequest(req); err != nil {
 		return err
