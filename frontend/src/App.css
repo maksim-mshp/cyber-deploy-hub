@@ -382,6 +382,10 @@ textarea {
   gap: 14px;
 }
 
+.settings-grid {
+  margin-top: 16px;
+}
+
 .wide {
   grid-column: span 3;
 }

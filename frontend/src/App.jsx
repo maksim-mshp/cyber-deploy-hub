@@ -45,6 +45,12 @@ const emptyDefinition = {
 
 const newDefinitionKey = '__new_definition__'
 
+const defaultRuntimeSettings = {
+  lab_ttl_minutes: 120,
+  freeze_ttl_hours: 24,
+  capacity_threshold_percent: 90,
+}
+
 let launchNoticeCache
 
 function App() {
@@ -347,6 +353,7 @@ function TeacherDashboard({ user }) {
   const [instanceState, setInstanceState] = useState({ runID: '', items: [] })
   const [notice, setNotice] = useState('')
   const [catalogWarning, setCatalogWarning] = useState('')
+  const [runtimeSettings, setRuntimeSettings] = useState(defaultRuntimeSettings)
   const [busy, setBusy] = useState(false)
 
   const activeRuns = useMemo(() => runs.filter((run) => activeStates.has(run.state)), [runs])
@@ -381,6 +388,7 @@ function TeacherDashboard({ user }) {
       }
       return snapshot.runs.find((run) => activeStates.has(run.state))?.id || ''
     })
+    setRuntimeSettings(snapshot.settings)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -522,6 +530,28 @@ function TeacherDashboard({ user }) {
     }
   }
 
+  async function saveRuntimeSettings(nextSettings) {
+    setBusy(true)
+    setNotice('')
+    try {
+      await requestJSON('/api/admin/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          changed_by: user.subject,
+          values: runtimeSettingsPayload(nextSettings),
+          idempotency_key: `settings:${user.subject}:${Date.now()}`,
+        }),
+      })
+      await refresh()
+      setRuntimeSettings(nextSettings)
+      setNotice('Настройки сохранены')
+    } catch (error) {
+      setNotice(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="teacher-layout">
       <section className="hero-band">
@@ -543,6 +573,13 @@ function TeacherDashboard({ user }) {
         <Metric icon={Server} label="Конфигурации" value={definitions.length} />
         <Metric icon={Cloud} label="OpenStack images" value={images.length} />
       </section>
+
+      <RuntimeSettingsPanel
+        key={`${runtimeSettings.lab_ttl_minutes}:${runtimeSettings.freeze_ttl_hours}:${runtimeSettings.capacity_threshold_percent}`}
+        settings={runtimeSettings}
+        onSave={saveRuntimeSettings}
+        busy={busy}
+      />
 
       <div className="teacher-grid">
         <section className="panel">
@@ -635,6 +672,68 @@ function TeacherDashboard({ user }) {
         definitions={definitions}
       />
     </div>
+  )
+}
+
+function RuntimeSettingsPanel({ settings, onSave, busy }) {
+  const [draft, setDraft] = useState(settings)
+  const [error, setError] = useState('')
+
+  function update(field, value) {
+    setDraft((current) => ({ ...current, [field]: Number(value) || 0 }))
+  }
+
+  async function save() {
+    const validationError = validateRuntimeSettings(draft)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+    setError('')
+    await onSave(draft)
+  }
+
+  return (
+    <section className="panel settings-panel">
+      <div className="panel-header">
+        <h2>Параметры жизненного цикла</h2>
+        <button className="primary-button" type="button" onClick={save} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+          Сохранить
+        </button>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="form-grid settings-grid">
+        <label>
+          <span>TTL стенда, мин</span>
+          <input
+            type="number"
+            min="1"
+            value={draft.lab_ttl_minutes}
+            onChange={(event) => update('lab_ttl_minutes', event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Заморозка, ч</span>
+          <input
+            type="number"
+            min="1"
+            value={draft.freeze_ttl_hours}
+            onChange={(event) => update('freeze_ttl_hours', event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Лимит кластера, %</span>
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={draft.capacity_threshold_percent}
+            onChange={(event) => update('capacity_threshold_percent', event.target.value)}
+          />
+        </label>
+      </div>
+    </section>
   )
 }
 
@@ -898,13 +997,15 @@ async function loadStudentSnapshot() {
 }
 
 async function loadTeacherSnapshot() {
-  const [teacherCatalog, labRuns] = await Promise.all([
+  const [teacherCatalog, labRuns, settings] = await Promise.all([
     requestJSON('/api/teacher/lab-definitions'),
     requestJSON('/api/labs?limit=100'),
+    requestJSON('/api/admin/settings'),
   ])
   return {
     definitions: teacherCatalog.labs ?? [],
     runs: labRuns.labs ?? [],
+    settings: normalizeRuntimeSettings(settings.values),
   }
 }
 
@@ -990,6 +1091,46 @@ function validateDraft(draft) {
     return `Суммарный диск VM (${diskTotal} GiB) больше лимита лабораторной (${draft.resources.disk_gib} GiB)`
   }
   return ''
+}
+
+function normalizeRuntimeSettings(values = {}) {
+  return {
+    lab_ttl_minutes: secondsToMinutes(values.lab_ttl_seconds, defaultRuntimeSettings.lab_ttl_minutes),
+    freeze_ttl_hours: secondsToHours(values.freeze_ttl_seconds, defaultRuntimeSettings.freeze_ttl_hours),
+    capacity_threshold_percent: Number(values.capacity_threshold_percent) || defaultRuntimeSettings.capacity_threshold_percent,
+  }
+}
+
+function runtimeSettingsPayload(settings) {
+  return {
+    lab_ttl_seconds: Math.round(Number(settings.lab_ttl_minutes) * 60),
+    freeze_ttl_seconds: Math.round(Number(settings.freeze_ttl_hours) * 3600),
+    capacity_threshold_percent: Number(settings.capacity_threshold_percent),
+  }
+}
+
+function validateRuntimeSettings(settings) {
+  if (Number(settings.lab_ttl_minutes) <= 0) {
+    return 'TTL стенда должен быть больше нуля'
+  }
+  if (Number(settings.freeze_ttl_hours) <= 0) {
+    return 'Время заморозки должно быть больше нуля'
+  }
+  const threshold = Number(settings.capacity_threshold_percent)
+  if (threshold <= 0 || threshold > 100) {
+    return 'Лимит кластера должен быть в диапазоне 1-100%'
+  }
+  return ''
+}
+
+function secondsToMinutes(value, fallback) {
+  const seconds = Number(value)
+  return seconds > 0 ? Math.round(seconds / 60) : fallback
+}
+
+function secondsToHours(value, fallback) {
+  const seconds = Number(value)
+  return seconds > 0 ? Math.round(seconds / 3600) : fallback
 }
 
 function createNewDefinitionDraft(definitions, images, flavors) {
