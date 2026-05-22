@@ -91,18 +91,16 @@ RETURNING id, lab_run_id::text, kind, state, due_at, COALESCE(reason, ''), COALE
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var timer Timer
-			if err := rows.Scan(&timer.ID, &timer.LabRunID, &timer.Kind, &timer.State, &timer.DueAt, &timer.Reason, &timer.CreatedByMessageID); err != nil {
-				return err
-			}
+		timers, err := scanTimers(rows)
+		if err != nil {
+			return err
+		}
+		for _, timer := range timers {
 			if err := insertTimerHistory(ctx, tx, timer.ID, timer, command.MessageID); err != nil {
 				return err
 			}
 		}
-		return rows.Err()
+		return nil
 	})
 }
 
@@ -160,13 +158,11 @@ RETURNING timers.id,
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var timer Timer
-			if err := rows.Scan(&timer.ID, &timer.LabRunID, &timer.Kind, &timer.State, &timer.DueAt, &timer.Reason, &timer.CreatedByMessageID); err != nil {
-				return err
-			}
+		timers, err := scanTimers(rows)
+		if err != nil {
+			return err
+		}
+		for _, timer := range timers {
 			event, err := dueEvent(producer, timer)
 			if err != nil {
 				return err
@@ -179,9 +175,23 @@ RETURNING timers.id,
 			}
 			fired++
 		}
-		return rows.Err()
+		return nil
 	})
 	return fired, err
+}
+
+func scanTimers(rows pgx.Rows) ([]Timer, error) {
+	defer rows.Close()
+
+	var timers []Timer
+	for rows.Next() {
+		var timer Timer
+		if err := rows.Scan(&timer.ID, &timer.LabRunID, &timer.Kind, &timer.State, &timer.DueAt, &timer.Reason, &timer.CreatedByMessageID); err != nil {
+			return nil, err
+		}
+		timers = append(timers, timer)
+	}
+	return timers, rows.Err()
 }
 
 func upsertTimer(ctx context.Context, tx pgx.Tx, timer Timer) (int64, error) {
