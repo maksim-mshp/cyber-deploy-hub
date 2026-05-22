@@ -59,9 +59,14 @@ func legacyNoVNCConsoleURL(ctx context.Context, compute *gophercloud.ServiceClie
 			"type": "novnc",
 		},
 	}
-	_, err := compute.Post(ctx, compute.ServiceURL("servers", serverID, "action"), body, &result, &gophercloud.RequestOpts{
+	resp, err := compute.Post(ctx, compute.ServiceURL("servers", serverID, "action"), body, &result, &gophercloud.RequestOpts{
 		OkCodes: []int{http.StatusOK},
 	})
+	if resp != nil && resp.Body != nil {
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+	}
 	if err != nil {
 		return "", err
 	}

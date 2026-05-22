@@ -730,7 +730,7 @@ func (s *Server) authenticateRequest(r *http.Request) (authn.Principal, error) {
 	}
 	cookie, err := r.Cookie(s.auth.CookieName())
 	if err != nil {
-		return authn.Principal{}, errors.New("Authentication is required")
+		return authn.Principal{}, errors.New("authentication is required")
 	}
 	return s.auth.AuthenticateToken(cookie.Value)
 }
