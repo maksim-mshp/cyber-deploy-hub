@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -94,6 +95,20 @@ func NewConsumer(
 }
 
 func (c *Consumer) Start() error {
+	err := c.subscribe()
+	if err == nil {
+		return nil
+	}
+	if c.opts.Durable == "" || !isConsumerConfigMismatch(err) {
+		return err
+	}
+	if deleteErr := c.js.DeleteConsumer(c.opts.Stream, c.opts.Durable); deleteErr != nil && !isConsumerNotFound(deleteErr) {
+		return errors.Join(err, deleteErr)
+	}
+	return c.subscribe()
+}
+
+func (c *Consumer) subscribe() error {
 	subscribeOpts := []nats.SubOpt{
 		nats.BindStream(c.opts.Stream),
 		nats.Durable(c.opts.Durable),
@@ -112,6 +127,22 @@ func (c *Consumer) Start() error {
 		c.sub, err = c.js.Subscribe(c.opts.Subject, c.handleMessage, subscribeOpts...)
 	}
 	return err
+}
+
+func isConsumerConfigMismatch(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "configuration requests") ||
+		strings.Contains(message, "consumer already exists")
+}
+
+func isConsumerNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, nats.ErrConsumerNotFound) || strings.Contains(strings.ToLower(err.Error()), "consumer not found")
 }
 
 func (c *Consumer) Close() {

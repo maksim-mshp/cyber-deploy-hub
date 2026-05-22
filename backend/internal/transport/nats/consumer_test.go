@@ -1,6 +1,7 @@
 package natsbus
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -47,5 +48,15 @@ func TestAckProgressIntervalKeepsMinimumSecond(t *testing.T) {
 	got := ackProgressInterval(1500 * time.Millisecond)
 	if got != time.Second {
 		t.Fatalf("ackProgressInterval = %v, want 1s", got)
+	}
+}
+
+func TestConsumerConfigMismatchDetection(t *testing.T) {
+	err := errors.New("nats: configuration requests ack wait to be 2m20s, but consumer's value is 2m0s")
+	if !isConsumerConfigMismatch(err) {
+		t.Fatal("expected config mismatch")
+	}
+	if isConsumerConfigMismatch(errors.New("nats: timeout")) {
+		t.Fatal("unexpected config mismatch")
 	}
 }
